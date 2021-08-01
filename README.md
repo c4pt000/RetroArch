@@ -3,6 +3,8 @@
 
 # RetroArch
 
+![s1](https://github.com/c4pt000/RetroArch/releases/download/legacy-systematic-theme/Systematic-legacy-themes.png)
+
 RetroArch is the reference frontend for the libretro API.
 Popular examples of implementations for this API includes video game system emulators and game engines as well as
 more generalized 3D programs.
