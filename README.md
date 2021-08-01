@@ -3,7 +3,11 @@
 
 # RetroArch preserved legacy "Sytematic" theme (because I like the systematic theme)
 
+
+* https://github.com/c4pt000/RetroArch/releases/tag/legacy-systematic-theme
+
 * place user.configdir.retroarch.tar.gz
+
 ```
 https://github.com/c4pt000/RetroArch/releases/download/legacy-systematic-theme/user.configdir.retroarch.tar.gz in /home/<user>/.config
    tar -xvf user.configdir.retroarch.tar.gz
