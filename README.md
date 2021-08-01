@@ -1,7 +1,7 @@
 [![Build Status](https://travis-ci.org/libretro/RetroArch.svg?branch=master)](https://travis-ci.org/libretro/RetroArch)
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/8936/badge.svg)](https://scan.coverity.com/projects/retroarch)
 
-# RetroArch
+# RetroArch preserved legacy "Sytematic" theme (because I like the systematic theme)
 
 ![s1](https://github.com/c4pt000/RetroArch/releases/download/legacy-systematic-theme/Systematic-legacy-themes.png)
 
