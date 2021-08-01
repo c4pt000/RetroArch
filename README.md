@@ -3,6 +3,12 @@
 
 # RetroArch preserved legacy "Sytematic" theme (because I like the systematic theme)
 
+* place user.configdir.retroarch.tar.gz
+```
+https://github.com/c4pt000/RetroArch/releases/download/legacy-systematic-theme/user.configdir.retroarch.tar.gz in /home/<user>/.config
+   tar -xvf user.configdir.retroarch.tar.gz
+```
+
 ![s1](https://github.com/c4pt000/RetroArch/releases/download/legacy-systematic-theme/Systematic-legacy-themes.png)
 
 RetroArch is the reference frontend for the libretro API.
