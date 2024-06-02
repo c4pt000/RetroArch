@@ -55,15 +55,9 @@ typedef struct xv
    XShmSegmentInfo shminfo;
 
    XvPortID port;
-   int depth;
-   int visualid;
 
    XvImage *image;
-   uint32_t fourcc;
 
-   unsigned width;
-   unsigned height;
-   bool keep_aspect;
    struct video_viewport vp;
 
    uint8_t *ytable;
@@ -73,19 +67,35 @@ typedef struct xv
    void *font;
    const font_renderer_driver_t *font_driver;
 
+   void (*render_func16)(struct xv*, const void *frame,
+         unsigned width, unsigned height, unsigned pitch);
+   void (*render_func32)(struct xv*, const void *frame,
+         unsigned width, unsigned height, unsigned pitch);
+
+   void (*render_glyph)(struct xv*, int base_x, int base_y,
+			const uint8_t *glyph, int atlas_width,
+			int glyph_width, int glyph_height);
+   int depth;
+   int visualid;
    unsigned luma_index[2];
    unsigned chroma_u_index;
    unsigned chroma_v_index;
-
+   unsigned width;
+   unsigned height;
+   uint32_t fourcc;
    uint8_t font_y;
    uint8_t font_u;
    uint8_t font_v;
+   bool keep_aspect;
 
-   void (*render_func)(struct xv*, const void *frame,
-         unsigned width, unsigned height, unsigned pitch);
+   void *tex_frame;
+   unsigned tex_width;
+   unsigned tex_height;
+   unsigned tex_pitch;
+   unsigned tex_rgb32;
 } xv_t;
 
-static void xv_set_nonblock_state(void *data, bool state)
+static void xv_set_nonblock_state(void *data, bool state, bool c, unsigned d)
 {
    xv_t *xv  = (xv_t*)data;
    Atom atom = XInternAtom(g_x11_dpy, "XV_SYNC_TO_VBLANK", true);
@@ -135,23 +145,28 @@ static void xv_init_yuv_tables(xv_t *xv)
 
 static void xv_init_font(xv_t *xv, const char *font_path, unsigned font_size)
 {
-   settings_t *settings = config_get_ptr();
+   settings_t *settings   = config_get_ptr();
+   bool video_font_enable = settings->bools.video_font_enable;
+   const char *path_font  = settings->paths.path_font;
+   float video_font_size  = settings->floats.video_font_size;
+   float msg_color_r      = settings->floats.video_msg_color_r;
+   float msg_color_g      = settings->floats.video_msg_color_g;
+   float msg_color_b      = settings->floats.video_msg_color_b;
 
-   if (!settings->bools.video_font_enable)
+   if (!video_font_enable)
       return;
 
    if (font_renderer_create_default(
             &xv->font_driver,
-            &xv->font, *settings->paths.path_font
-            ? settings->paths.path_font : NULL,
-            settings->floats.video_font_size))
+            &xv->font, *path_font
+            ? path_font : NULL,
+            video_font_size))
    {
-      int r, g, b;
-      r = settings->floats.video_msg_color_r * 255;
+      int r = msg_color_r * 255;
+      int g = msg_color_g * 255;
+      int b = msg_color_b * 255;
       r = (r < 0 ? 0 : (r > 255 ? 255 : r));
-      g = settings->floats.video_msg_color_g * 255;
       g = (g < 0 ? 0 : (g > 255 ? 255 : g));
-      b = settings->floats.video_msg_color_b * 255;
       b = (b < 0 ? 0 : (b > 255 ? 255 : b));
 
       xv_calculate_yuv(&xv->font_y, &xv->font_u, &xv->font_v,
@@ -290,34 +305,242 @@ static void render32_uyvy(xv_t *xv, const void *input_,
    }
 }
 
+static void render32_yuv12(xv_t *xv, const void *input_,
+      unsigned width, unsigned height, unsigned pitch)
+{
+   unsigned x, y;
+   const uint32_t *input = (const uint32_t*)input_;
+   unsigned w0 = xv->width >> 1;
+   unsigned w1 = w0 << 1;
+   unsigned h0 = xv->height >> 1;
+   uint8_t *output       = (uint8_t*)xv->image->data;
+   uint8_t *outputu       = (uint8_t*)xv->image->data + 4 * w0 * h0;
+   uint8_t *outputv       = (uint8_t*)xv->image->data + 5 * w0 * h0;
+
+   for (y = 0; y < height; y++)
+   {
+      for (x = 0; x < width; x++)
+      {
+         uint8_t y0, u, v;
+         unsigned img_width;
+         uint32_t p = *input++;
+         p = ((p >> 8) & 0xf800) | ((p >> 5) & 0x07e0)
+            | ((p >> 3) & 0x1f); /* ARGB -> RGB16 */
+
+         y0        = xv->ytable[p];
+         u         = xv->utable[p];
+         v         = xv->vtable[p];
+
+         output[0] = output[w1] = y0;
+	 output[1] = output[w1+1] = y0;
+         output+=2;
+	 *outputu++ = u;
+	 *outputv++ = v;
+      }
+
+      input  += (pitch >> 2) - width;
+      output += 4 * w0 - 2 * width;
+      outputu += (w0 - width);
+      outputv += (w0 - width);
+   }
+}
+
+static void render16_yuv12(xv_t *xv, const void *input_,
+      unsigned width, unsigned height, unsigned pitch)
+{
+   unsigned x, y;
+   const uint16_t *input = (const uint16_t*)input_;
+   unsigned w0 = xv->width >> 1;
+   unsigned w1 = w0 << 1;
+   unsigned h0 = xv->height >> 1;
+   uint8_t *output       = (uint8_t*)xv->image->data;
+   uint8_t *outputu       = (uint8_t*)xv->image->data + 4 * w0 * h0;
+   uint8_t *outputv       = (uint8_t*)xv->image->data + 5 * w0 * h0;
+
+   for (y = 0; y < height; y++)
+   {
+      for (x = 0; x < width; x++)
+      {
+         uint16_t p         = *input++;
+         uint8_t y0         = xv->ytable[p];
+         uint8_t u          = xv->utable[p];
+         uint8_t v          = xv->vtable[p];
+
+         output[0] = output[w1] = y0;
+	 output[1] = output[w1+1] = y0;
+         output+=2;
+	 *outputu++ = u;
+	 *outputv++ = v;
+      }
+
+      input  += (pitch >> 1) - width;
+      output += 4 * w0 - 2 * width;
+      outputu += (w0 - width);
+      outputv += (w0 - width);
+   }
+}
+
+static INLINE void render_glyph_yuv12(xv_t *xv, int base_x, int base_y,
+				      const uint8_t *glyph, int atlas_width,
+				      int glyph_width, int glyph_height)
+{
+   uint8_t *out_luma, *out_u, *out_v;
+   int x, y, i;
+
+   out_luma = (uint8_t*)xv->image->data + base_y * xv->width + (base_x);
+   out_u = (uint8_t*)xv->image->data + xv->width * xv->height + (base_y / 2) * xv->width / 2 + (base_x / 2);
+   out_v= (uint8_t*)xv->image->data + xv->width * xv->height * 5 / 4 + (base_y / 2) * xv->width / 2 + (base_x / 2);
+
+   for (y = 0; y < glyph_height; y++, glyph += atlas_width, out_luma += xv->width)
+   {
+      /* 2 input pixels => 4 bytes (2Y, 1U, 1V). */
+
+      for (x = 0; x < glyph_width; x += 2)
+      {
+	 unsigned alpha[2], alpha_sub, blended;
+
+	 alpha[0] = glyph[x + 0];
+	 alpha[1] = 0;
+
+	 if (x + 1 < glyph_width)
+	    alpha[1] = glyph[x + 1];
+
+	 /* Blended alpha for the sub-sampled U/V channels. */
+	 alpha_sub = (alpha[0] + alpha[1]) >> 1;
+
+	 for (i = 0; i < 2; i++)
+	 {
+	    unsigned blended = (xv->font_y * alpha[i]
+				+ ((256 - alpha[i]) * out_luma[x+i])) >> 8;
+	    out_luma[x+i] = blended;
+	 }
+
+	 /* Blend chroma channels */
+	 if (y & 1)
+	 {
+	    blended = (xv->font_u * alpha_sub
+		       + ((256 - alpha_sub) * out_u[x/2])) >> 8;
+	    out_u[x / 2] = blended;
+
+	    blended = (xv->font_v * alpha_sub
+		       + ((256 - alpha_sub) * out_v[x/2])) >> 8;
+	    out_v[x/2] = blended;
+	 }
+      }
+
+      if (y & 1)
+      {
+	 out_u += xv->width / 2;
+	 out_v += xv->width / 2;
+      }
+   }
+}
+
+static INLINE void render_glyph_yuv_packed(xv_t *xv, int base_x, int base_y,
+					   const uint8_t *glyph, int atlas_width,
+					   int glyph_width, int glyph_height)
+{
+   uint8_t *out                   = NULL;
+   int x, y, i;
+   unsigned luma_index[2], pitch;
+   unsigned chroma_u_index, chroma_v_index;
+
+   luma_index[0]  = xv->luma_index[0];
+   luma_index[1]  = xv->luma_index[1];
+
+   chroma_u_index = xv->chroma_u_index;
+   chroma_v_index = xv->chroma_v_index;
+
+   pitch          = xv->width << 1; /* YUV formats used are 16 bpp. */
+   out = (uint8_t*)xv->image->data + base_y * pitch + (base_x << 1);
+
+   for (y = 0; y < glyph_height; y++, glyph += atlas_width, out += pitch)
+   {
+      /* 2 input pixels => 4 bytes (2Y, 1U, 1V). */
+
+      for (x = 0; x < glyph_width; x += 2)
+      {
+	 unsigned alpha[2], alpha_sub, blended;
+	 int out_x = x << 1;
+
+	 alpha[0] = glyph[x + 0];
+	 alpha[1] = 0;
+
+	 if (x + 1 < glyph_width)
+	    alpha[1] = glyph[x + 1];
+
+	 /* Blended alpha for the sub-sampled U/V channels. */
+	 alpha_sub = (alpha[0] + alpha[1]) >> 1;
+
+	 for (i = 0; i < 2; i++)
+	 {
+	    unsigned blended = (xv->font_y * alpha[i]
+				+ ((256 - alpha[i]) * out[out_x + luma_index[i]])) >> 8;
+	    out[out_x + luma_index[i]] = blended;
+	 }
+
+	 /* Blend chroma channels */
+	 blended = (xv->font_u * alpha_sub
+		    + ((256 - alpha_sub) * out[out_x + chroma_u_index])) >> 8;
+	 out[out_x + chroma_u_index] = blended;
+
+	 blended = (xv->font_v * alpha_sub
+		    + ((256 - alpha_sub) * out[out_x + chroma_v_index])) >> 8;
+	 out[out_x + chroma_v_index] = blended;
+      }
+   }
+}
+
 struct format_desc
 {
    void (*render_16)(xv_t *xv, const void *input,
          unsigned width, unsigned height, unsigned pitch);
    void (*render_32)(xv_t *xv, const void *input,
          unsigned width, unsigned height, unsigned pitch);
+   void (*render_glyph)(xv_t *xv, int base_x, int base_y,
+			const uint8_t *glyph, int atlas_width,
+			int glyph_width, int glyph_height);
    char components[4];
    unsigned luma_index[2];
    unsigned u_index;
    unsigned v_index;
+   unsigned bits;
+   int format;
 };
 
 static const struct format_desc formats[] = {
    {
       render16_yuy2,
       render32_yuy2,
+      render_glyph_yuv_packed,
       { 'Y', 'U', 'Y', 'V' },
       { 0, 2 },
       1,
       3,
+      16,
+      XvPacked
    },
    {
       render16_uyvy,
       render32_uyvy,
+      render_glyph_yuv_packed,
       { 'U', 'Y', 'V', 'Y' },
       { 1, 3 },
       0,
       2,
+      16,
+      XvPacked
+   },
+   {
+      render16_yuv12,
+      render32_yuv12,
+      render_glyph_yuv12,
+      { 'Y', 'U', 'V', 0 },
+      { 1, 3 },
+      0,
+      2,
+      12,
+      XvPlanar
    },
 };
 
@@ -338,8 +561,8 @@ static bool xv_adaptor_set_format(xv_t *xv, Display *dpy,
       for (j = 0; j < ARRAY_SIZE(formats); j++)
       {
          if (format[i].type == XvYUV
-               && format[i].bits_per_pixel == 16
-               && format[i].format == XvPacked)
+               && format[i].bits_per_pixel == formats[j].bits
+               && format[i].format == formats[j].format)
          {
             if (format[i].component_order[0] == formats[j].components[0] &&
                   format[i].component_order[1] == formats[j].components[1] &&
@@ -347,8 +570,9 @@ static bool xv_adaptor_set_format(xv_t *xv, Display *dpy,
                   format[i].component_order[3] == formats[j].components[3])
             {
                xv->fourcc         = format[i].id;
-               xv->render_func    = video->rgb32
-                  ? formats[j].render_32 : formats[j].render_16;
+               xv->render_func16  = formats[j].render_16;
+               xv->render_func32  = formats[j].render_32;
+               xv->render_glyph   = formats[j].render_glyph;
 
                xv->luma_index[0]  = formats[j].luma_index[0];
                xv->luma_index[1]  = formats[j].luma_index[1];
@@ -370,11 +594,12 @@ static void xv_calc_out_rect(bool keep_aspect,
       unsigned vp_width, unsigned vp_height)
 {
    settings_t *settings = config_get_ptr();
+   bool scale_integer   = settings->bools.video_scale_integer;
 
    vp->full_width       = vp_width;
    vp->full_height      = vp_height;
 
-   if (settings->bools.video_scale_integer)
+   if (scale_integer)
       video_viewport_get_scaled_integer(vp, vp_width, vp_height,
             video_driver_get_aspect_ratio(), keep_aspect);
    else if (!keep_aspect)
@@ -437,9 +662,10 @@ static void *xv_init(const video_info_t *video,
    XVisualInfo *visualinfo                = NULL;
    XvAdaptorInfo *adaptor_info            = NULL;
    const struct retro_game_geometry *geom = NULL;
-   struct retro_system_av_info *av_info   = NULL;
+   video_driver_state_t *video_st         = video_state_get_ptr();
+   struct retro_system_av_info *av_info   = &video_st->av_info;
    settings_t *settings                   = config_get_ptr();
-
+   bool video_disable_composition         = settings->bools.video_disable_composition;
    xv_t                               *xv = (xv_t*)calloc(1, sizeof(*xv));
    if (!xv)
       return NULL;
@@ -448,14 +674,12 @@ static void *xv_init(const video_info_t *video,
 
    g_x11_dpy = XOpenDisplay(NULL);
 
-   if (g_x11_dpy == NULL)
+   if (!g_x11_dpy)
    {
       RARCH_ERR("[XVideo]: Cannot connect to the X server.\n");
       RARCH_ERR("[XVideo]: Check DISPLAY variable and if X is running.\n");
       goto error;
    }
-
-   av_info = video_viewport_get_system_av_info();
 
    if (av_info)
       geom        = &av_info->geometry;
@@ -563,14 +787,17 @@ static void *xv_init(const video_info_t *video,
    XFree(visualinfo);
    XSetWindowBackground(g_x11_dpy, g_x11_win, 0);
 
-   if (video->fullscreen && settings->bools.video_disable_composition)
+   if (video->fullscreen && video_disable_composition)
    {
       uint32_t value = 1;
       Atom cardinal = XInternAtom(g_x11_dpy, "CARDINAL", False);
-      Atom net_wm_bypass_compositor = XInternAtom(g_x11_dpy, "_NET_WM_BYPASS_COMPOSITOR", False);
+      Atom net_wm_bypass_compositor = XInternAtom(g_x11_dpy,
+            "_NET_WM_BYPASS_COMPOSITOR", False);
 
       RARCH_LOG("[XVideo]: Requesting compositor bypass.\n");
-      XChangeProperty(g_x11_dpy, g_x11_win, net_wm_bypass_compositor, cardinal, 32, PropModeReplace, (const unsigned char*)&value, 1);
+      XChangeProperty(g_x11_dpy, g_x11_win,
+            net_wm_bypass_compositor, cardinal, 32,
+            PropModeReplace, (const unsigned char*)&value, 1);
    }
 
    XMapWindow(g_x11_dpy, g_x11_win);
@@ -585,7 +812,7 @@ static void *xv_init(const video_info_t *video,
    if (video->fullscreen)
    {
       x11_set_net_wm_fullscreen(g_x11_dpy, g_x11_win);
-      x11_show_mouse(g_x11_dpy, g_x11_win, false);
+      x11_show_mouse(xv, false);
    }
 
    xv->gc = XCreateGC(g_x11_dpy, g_x11_win, 0, 0);
@@ -628,11 +855,16 @@ static void *xv_init(const video_info_t *video,
 
    frontend_driver_install_signal_handler();
 
-   xv_set_nonblock_state(xv, !video->vsync);
+   xv_init_yuv_tables(xv);
+   xv_init_font(xv, settings->paths.path_font, settings->floats.video_font_size);
+
+   if (!x11_input_ctx_new(true))
+      goto error;
 
    if (input && input_data)
    {
-      xinput = input_x.init(settings->arrays.input_joypad_driver);
+      xinput = input_driver_init_wrap(&input_x,
+            settings->arrays.input_joypad_driver);
       if (xinput)
       {
          *input = &input_x;
@@ -641,12 +873,6 @@ static void *xv_init(const video_info_t *video,
       else
          *input = NULL;
    }
-
-   xv_init_yuv_tables(xv);
-   xv_init_font(xv, settings->paths.path_font, settings->floats.video_font_size);
-
-   if (!x11_input_ctx_new(true))
-      goto error;
 
    XGetWindowAttributes(g_x11_dpy, g_x11_win, &target);
    xv_calc_out_rect(xv->keep_aspect, &xv->vp, target.width, target.height);
@@ -717,33 +943,24 @@ static bool xv_check_resize(xv_t *xv, unsigned width, unsigned height)
 static void xv_render_msg(xv_t *xv, const char *msg,
       unsigned width, unsigned height)
 {
-   int x, y, msg_base_x, msg_base_y;
-   unsigned i, luma_index[2], pitch;
-   unsigned chroma_u_index, chroma_v_index;
-   settings_t *settings = config_get_ptr();
+   int msg_base_x, msg_base_y;
    const struct font_atlas *atlas = NULL;
+   settings_t           *settings = config_get_ptr();
+   float video_msg_pos_x          = settings->floats.video_msg_pos_x;
+   float video_msg_pos_y          = settings->floats.video_msg_pos_y;
 
    if (!xv->font)
       return;
 
    atlas          = xv->font_driver->get_atlas(xv->font);
 
-   msg_base_x     = settings->floats.video_msg_pos_x * width;
-   msg_base_y     = height * (1.0f - settings->floats.video_msg_pos_y);
-
-   luma_index[0]  = xv->luma_index[0];
-   luma_index[1]  = xv->luma_index[1];
-
-   chroma_u_index = xv->chroma_u_index;
-   chroma_v_index = xv->chroma_v_index;
-
-   pitch          = width << 1; /* YUV formats used are 16 bpp. */
+   msg_base_x     = video_msg_pos_x * width;
+   msg_base_y     = height * (1.0f - video_msg_pos_y);
 
    for (; *msg; msg++)
    {
       int base_x, base_y, glyph_width, glyph_height, max_width, max_height;
       const uint8_t *src             = NULL;
-      uint8_t *out                   = NULL;
       const struct font_glyph *glyph =
          xv->font_driver->get_glyph(xv->font, (uint8_t)*msg);
 
@@ -786,43 +1003,7 @@ static void xv_render_msg(xv_t *xv, const char *msg,
       if (glyph_height > max_height)
          glyph_height  = max_height;
 
-      out = (uint8_t*)xv->image->data + base_y * pitch + (base_x << 1);
-
-      for (y = 0; y < glyph_height; y++, src += atlas->width, out += pitch)
-      {
-         /* 2 input pixels => 4 bytes (2Y, 1U, 1V). */
-
-         for (x = 0; x < glyph_width; x += 2)
-         {
-            unsigned alpha[2], alpha_sub, blended;
-            int out_x = x << 1;
-
-            alpha[0] = src[x + 0];
-            alpha[1] = 0;
-
-            if (x + 1 < glyph_width)
-               alpha[1] = src[x + 1];
-
-            /* Blended alpha for the sub-sampled U/V channels. */
-            alpha_sub = (alpha[0] + alpha[1]) >> 1;
-
-            for (i = 0; i < 2; i++)
-            {
-               unsigned blended = (xv->font_y * alpha[i]
-                     + ((256 - alpha[i]) * out[out_x + luma_index[i]])) >> 8;
-               out[out_x + luma_index[i]] = blended;
-            }
-
-            /* Blend chroma channels */
-            blended = (xv->font_u * alpha_sub
-                  + ((256 - alpha_sub) * out[out_x + chroma_u_index])) >> 8;
-            out[out_x + chroma_u_index] = blended;
-
-            blended = (xv->font_v * alpha_sub
-                  + ((256 - alpha_sub) * out[out_x + chroma_v_index])) >> 8;
-            out[out_x + chroma_v_index] = blended;
-         }
-      }
+      xv->render_glyph(xv, base_x, base_y, src, atlas->width, glyph_width, glyph_height);
 
       msg_base_x += glyph->advance_x;
       msg_base_y += glyph->advance_y;
@@ -835,6 +1016,21 @@ static bool xv_frame(void *data, const void *frame, unsigned width,
 {
    XWindowAttributes target;
    xv_t *xv                  = (xv_t*)data;
+   bool rgb32                = (video_info->video_st_flags & VIDEO_FLAG_USE_RGBA) ? true : false;
+#ifdef HAVE_MENU
+   bool menu_is_alive        = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
+
+   menu_driver_frame(menu_is_alive, video_info);
+
+   if (menu_is_alive && xv->tex_frame)
+   {
+      frame  = xv->tex_frame;
+      width  = xv->tex_width;
+      height = xv->tex_height;
+      pitch  = xv->tex_pitch;
+      rgb32  = xv->tex_rgb32;
+   }
+#endif
 
    if (!frame)
       return true;
@@ -843,15 +1039,15 @@ static bool xv_frame(void *data, const void *frame, unsigned width,
       return false;
 
    XGetWindowAttributes(g_x11_dpy, g_x11_win, &target);
-   xv->render_func(xv, frame, width, height, pitch);
+
+   if (rgb32)
+      xv->render_func32(xv, frame, width, height, pitch);
+   else
+      xv->render_func16(xv, frame, width, height, pitch);
 
    xv_calc_out_rect(xv->keep_aspect, &xv->vp, target.width, target.height);
    xv->vp.full_width  = target.width;
    xv->vp.full_height = target.height;
-
-#ifdef HAVE_MENU
-   menu_driver_frame(video_info);
-#endif
 
    if (msg)
       xv_render_msg(xv, msg, width << 1, height << 1);
@@ -862,29 +1058,12 @@ static bool xv_frame(void *data, const void *frame, unsigned width,
          true);
    XSync(g_x11_dpy, False);
 
-   x11_update_title(NULL, video_info);
+   x11_update_title(NULL);
 
    return true;
 }
 
-static bool xv_suppress_screensaver(void *data, bool enable)
-{
-   (void)data;
-
-   if (video_driver_display_type_get() != RARCH_DISPLAY_X11)
-      return false;
-
-   x11_suspend_screensaver(video_driver_window_get(), enable);
-   return true;
-}
-
-static bool xv_has_windowed(void *data)
-{
-   (void)data;
-
-   /* TODO - verify. */
-   return true;
-}
+static bool xv_has_windowed(void *data) { return true; }
 
 static void xv_free(void *data)
 {
@@ -921,35 +1100,53 @@ static void xv_viewport_info(void *data, struct video_viewport *vp)
    *vp = xv->vp;
 }
 
-static uint32_t xv_get_flags(void *data)
+static uint32_t xv_poke_get_flags(void *data)
 {
-   uint32_t flags = 0;
+   return 0;
+}
 
-   return flags;
+static void xv_poke_set_texture_frame(void *data,
+      const void *frame, bool rgb32,
+      unsigned width, unsigned height, float alpha)
+{
+   xv_t *xv  = (xv_t*)data;
+   xv->tex_frame = (void*)frame;
+   xv->tex_rgb32 = rgb32;
+   xv->tex_width = width;
+   xv->tex_height = height;
+   xv->tex_pitch = width * (rgb32 ? 4 : 2);
 }
 
 static video_poke_interface_t xv_video_poke_interface = {
-   xv_get_flags,
-   NULL,
-   NULL,
-   NULL,
+   xv_poke_get_flags,
+   NULL, /* load_texture */
+   NULL, /* unload_texture */
+   NULL, /* set_video_mode */
+#ifdef HAVE_XF86VM
    x11_get_refresh_rate,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL
+#else
+   NULL, /* get_refresh_rate */
+#endif
+   NULL, /* set_filtering */
+   NULL, /* get_video_output_size */
+   NULL, /* get_video_output_prev */
+   NULL, /* get_video_output_next */
+   NULL, /* get_current_framebuffer */
+   NULL, /* get_proc_address */
+   NULL, /* set_aspect_ratio */
+   NULL, /* apply_state_changes */
+   xv_poke_set_texture_frame,
+   NULL, /* set_texture_enable */
+   NULL, /* set_osd_msg */
+   NULL, /* show_mouse */
+   NULL, /* grab_mouse_toggle */
+   NULL, /* get_current_shader */
+   NULL, /* get_current_software_framebuffer */
+   NULL, /* get_hw_render_interface */
+   NULL, /* set_hdr_max_nits */
+   NULL, /* set_hdr_paper_white_nits */
+   NULL, /* set_hdr_contrast */
+   NULL  /* set_hdr_expand_gamut */
 };
 
 static void xv_get_poke_interface(void *data,
@@ -975,7 +1172,7 @@ video_driver_t video_xvideo = {
    xv_set_nonblock_state,
    x11_alive,
    x11_has_focus_internal,
-   xv_suppress_screensaver,
+   x11_suspend_screensaver,
    xv_has_windowed,
    xv_set_shader,
    xv_free,
@@ -986,10 +1183,11 @@ video_driver_t video_xvideo = {
    NULL, /* read_viewport */
    NULL, /* read_frame_raw */
 #ifdef HAVE_OVERLAY
-  NULL, /* overlay_interface */
+   NULL, /* get_overlay_interface */
 #endif
-#ifdef HAVE_VIDEO_LAYOUT
-  NULL,
+   xv_get_poke_interface,
+   NULL, /* wrap_type_to_enum */
+#ifdef HAVE_GFX_WIDGETS
+   NULL  /* gfx_widgets_enabled */
 #endif
-  xv_get_poke_interface
 };

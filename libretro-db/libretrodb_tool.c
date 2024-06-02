@@ -31,11 +31,14 @@
 int main(int argc, char ** argv)
 {
    int rv;
-   libretrodb_t *db;
-   libretrodb_cursor_t *cur;
-   libretrodb_query_t *q;
    struct rmsgpack_dom_value item;
-   const char *command, *path, *query_exp, *error;
+   const char *command                            = NULL;
+   const char *path                               = NULL;
+   const char *query_exp                          = NULL;
+   const char *error                              = NULL;
+   libretrodb_t *db                               = NULL;
+   libretrodb_cursor_t *cur                       = NULL;
+   libretrodb_query_t *q                          = NULL;
 
    if (argc < 3)
    {
@@ -51,22 +54,22 @@ int main(int argc, char ** argv)
    command = argv[2];
    path    = argv[1];
 
-   db  = libretrodb_new();
-   cur = libretrodb_cursor_new();
+   db      = libretrodb_new();
+   cur     = libretrodb_cursor_new();
 
    if (!db || !cur)
       goto error;
 
-   if ((rv = libretrodb_open(path, db)) != 0)
+   if ((rv = libretrodb_open(path, db, true)) != 0)
    {
-      printf("Could not open db file '%s': %s\n", path, strerror(-rv));
+      printf("Could not open db file '%s'\n", path);
       goto error;
    }
    else if (memcmp(command, "list", 4) == 0)
    {
       if ((rv = libretrodb_cursor_open(db, cur, NULL)) != 0)
       {
-         printf("Could not open cursor: %s\n", strerror(-rv));
+         printf("Could not open cursor\n");
          goto error;
       }
 
@@ -103,7 +106,7 @@ int main(int argc, char ** argv)
 
       if ((rv = libretrodb_cursor_open(db, cur, q)) != 0)
       {
-         printf("Could not open cursor: %s\n", strerror(-rv));
+         printf("Could not open cursor\n");
          goto error;
       }
 
@@ -134,7 +137,7 @@ int main(int argc, char ** argv)
 
       if ((rv = libretrodb_cursor_open(db, cur, q)) != 0)
       {
-         printf("Could not open cursor: %s\n", strerror(-rv));
+         printf("Could not open cursor\n");
          goto error;
       }
 

@@ -1,3 +1,9 @@
+# This setting is to prevent travis to launch duplicate builds on PRs
+branches:
+  only:
+    - master
+    - /^v.*$/
+
 # Use 'generic' to be able to override CC/CXX for clang
 language: generic
 
@@ -27,15 +33,25 @@ matrix:
     - compiler: gcc
       env: CC=gcc-8 CXX=g++-8
     - compiler: gcc
+      env: CC="gcc-8 --sysroot=/" CXX="g++-8 --sysroot=/"
+    - compiler: gcc
       env: C89_BUILD=1 CC=gcc-8 CXX=g++-8
     - compiler: gcc
       env: CXX_BUILD=1 CC=gcc-8 CXX=g++-8
     - compiler: gcc
       env: DISABLE_MENU=1 CC=gcc-8 CXX=g++-8
     - compiler: gcc
+      env: DISABLE_NETWORKING=1 CC=gcc-8 CXX=g++-8
+    - compiler: gcc
       env: DISABLE_OVERLAY=1 CC=gcc-8 CXX=g++-8
     - compiler: gcc
       env: DISABLE_CDROM=1 CC=gcc-8 CXX=g++-8
+    - compiler: gcc
+      env: DISABLE_VIDEO_LAYOUT=1 CC=gcc-8 CXX=g++-8
+    - compiler: gcc
+      env: DISABLE_THREADS=1 CC=gcc-8 CXX=g++-8
+    - compiler: gcc
+      env: DISABLE_AUDIOMIXER=1 CC=gcc-8 CXX=g++-8
     - compiler: gcc
       env: ENABLE_GLES=1 CC=gcc-8 CXX=g++-8
     - compiler: gcc
@@ -48,29 +64,20 @@ matrix:
       env: CXX_BUILD=1 CC=clang-6.0 CXX=clang++-6.0
     - os: osx
       env: CC=clang CXX=clang++
-    - os: osx
-      osx_image: xcode8
+    - name: OSX OpenGL Make
+      os: osx
+      osx_image: xcode11.2
       script:
-        - xcodebuild -target RetroArch -configuration Release -project pkg/apple/RetroArch.xcodeproj
-    - os: osx
-      osx_image: xcode10.1
-      script:
-        - brew install --force-bottle qt5
-        - xcodebuild -target RetroArchQt -configuration Release -project pkg/apple/RetroArch_Metal.xcodeproj
-      deploy:
-        skip_cleanup: true
-        provider: script
-        script: bash travis_metal_deploy.sh
-        on:
-          branch: master
+        - ./configure --enable-opengl --disable-metal
+        - make
     - language: android
       # Android builds are only supported on Trusty
       dist: trusty
       android:
         components:
           - tools
-          - build-tools-28.0.3
-          - android-28
+          - build-tools-29.0.3
+          - android-29
       install:
         - echo y | sdkmanager "ndk-bundle"
       before_script:
@@ -79,9 +86,13 @@ matrix:
         - cd pkg/android/phoenix
         - ./gradlew assembleNormalRelease
 
+jobs:
+  allow_failure:
+    - os: osx
+
 before_install:
   - |
-     if [ "$CC" = gcc-8 ]; then
+     if [[ "$CC" =~ ^gcc-8.* ]]; then
        # Install a more recent gcc than the default
        sudo apt-get install -y g++-8
      elif [ "$CC" = clang-6.0 ]; then
@@ -93,7 +104,7 @@ before_install:
        sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
      fi
 
-script:
+before_script:
   - |
      if [ -n "$CROSS_COMPILE" ]; then
        ARGS="$ARGS --disable-d3d8 --disable-d3d9 --disable-d3d10 --disable-d3d11 --disable-d3d12"
@@ -107,8 +118,24 @@ script:
        ARGS="$ARGS --disable-overlay"
      fi
   - |
+     if [ -n "$DISABLE_NETWORKING" ]; then
+       ARGS="$ARGS --disable-networking"
+     fi
+  - |
      if [ -n "$DISABLE_CDROM" ]; then
        ARGS="$ARGS --disable-cdrom"
+     fi
+  - |
+     if [ -n "$DISABLE_VIDEO_LAYOUT" ]; then
+       ARGS="$ARGS --disable-video_layout"
+     fi
+  - |
+     if [ -n "$DISABLE_THREADS" ]; then
+       ARGS="$ARGS --disable-threads --disable-glslang"
+     fi
+  - |
+     if [ -n "$DISABLE_AUDIOMIXER" ]; then
+       ARGS="$ARGS --disable-audiomixer"
      fi
   - |
      if [ -n "$ENABLE_GLES" ]; then
@@ -118,6 +145,9 @@ script:
      if [ -n "$ENABLE_GLES3" ]; then
        ARGS="$ARGS --enable-opengles3"
      fi
+  - echo "Configure arguments = $ARGS"
+
+script:
   - ./configure $ARGS
   - |
      if [ -n "$C89_BUILD" ]; then
@@ -152,4 +182,4 @@ addons:
     build_command:   "make"
     branch_pattern: coverity_scan
 notifications:
-  email: false
+  email: true

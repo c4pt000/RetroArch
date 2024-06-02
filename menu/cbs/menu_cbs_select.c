@@ -27,43 +27,31 @@
 
 #ifdef HAVE_NETWORKING
 #include "../../network/netplay/netplay.h"
-#include "../../network/netplay/netplay_discovery.h"
 #endif
 
 #ifndef BIND_ACTION_SELECT
-#define BIND_ACTION_SELECT(cbs, name) \
-   cbs->action_select = name; \
-   cbs->action_select_ident = #name;
+#define BIND_ACTION_SELECT(cbs, name) (cbs)->action_select = (name)
 #endif
 
-static int action_select_default(const char *path, const char *label, unsigned type,
-      size_t idx)
+static int action_select_default(
+      const char *path, const char *label, unsigned type,
+      size_t idx, size_t entry_idx)
 {
-   menu_entry_t entry;
    int ret                    = 0;
    enum menu_action action    = MENU_ACTION_NOOP;
    menu_file_list_cbs_t *cbs  = NULL;
-   file_list_t *selection_buf = menu_entries_get_selection_buf_ptr(0);
-
-   menu_entry_init(&entry);
-   /* Note: If menu_entry_action() is modified,
-    * will have to verify that these parameters
-    * remain unused... */
-   entry.rich_label_enabled = false;
-   entry.value_enabled      = false;
-   entry.sublabel_enabled   = false;
-   menu_entry_get(&entry, 0, idx, NULL, false);
+   struct menu_state *menu_st = menu_state_get_ptr();
+   menu_list_t *menu_list     = menu_st->entries.list;
+   file_list_t *selection_buf = menu_list ? MENU_LIST_GET_SELECTION(menu_list, 0) : NULL;
 
    if (selection_buf)
-      cbs                     = (menu_file_list_cbs_t*)
-         file_list_get_actiondata_at_offset(selection_buf, idx);
-
-   if (!cbs)
-      return -1;
+      if (!(cbs = (menu_file_list_cbs_t*)
+         file_list_get_actiondata_at_offset(selection_buf, idx)))
+         return -1;
 
    if (cbs->setting)
    {
-      switch (setting_get_type(cbs->setting))
+      switch (cbs->setting->type)
       {
          case ST_BOOL:
          case ST_INT:
@@ -74,15 +62,14 @@ static int action_select_default(const char *path, const char *label, unsigned t
             if (cbs->action_ok)
                action     = MENU_ACTION_OK;
             else
-               action = MENU_ACTION_RIGHT;
+               action     = MENU_ACTION_RIGHT;
             break;
          case ST_PATH:
          case ST_DIR:
          case ST_ACTION:
          case ST_STRING:
-         case ST_HEX:
          case ST_BIND:
-            action = MENU_ACTION_OK;
+            action        = MENU_ACTION_OK;
             break;
          default:
             break;
@@ -103,7 +90,19 @@ static int action_select_default(const char *path, const char *label, unsigned t
    }
 
    if (action != MENU_ACTION_NOOP)
-       ret = menu_entry_action(&entry, (unsigned)idx, action);
+   {
+      menu_entry_t entry;
+      MENU_ENTRY_INITIALIZE(entry);
+
+      entry.flags |= MENU_ENTRY_FLAG_PATH_ENABLED
+                   | MENU_ENTRY_FLAG_LABEL_ENABLED;
+      /* Note: If menu_entry_action() is modified,
+       * will have to verify that these parameters
+       * remain unused... */
+      menu_entry_get(&entry, 0, idx, NULL, false);
+
+      ret = menu_entry_action(&entry, idx, action);
+   }
 
    task_queue_check();
 
@@ -111,134 +110,30 @@ static int action_select_default(const char *path, const char *label, unsigned t
 }
 
 static int action_select_path_use_directory(const char *path,
-      const char *label, unsigned type, size_t idx)
+      const char *label, unsigned type, size_t idx, size_t entry_idx)
 {
    return action_ok_path_use_directory(path, label, type, idx, 0 /* unused */);
 }
 
 static int action_select_core_setting(const char *path, const char *label, unsigned type,
-      size_t idx)
+      size_t idx, size_t entry_idx)
 {
    return action_ok_core_option_dropdown_list(path, label, type, idx, 0);
 }
 
-#if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
-static int shader_action_parameter_select(const char *path, const char *label, unsigned type,
-      size_t idx)
-{
-   return shader_action_parameter_right(type, label, true);
-}
-
-static int shader_action_parameter_preset_select(const char *path, const char *label, unsigned type,
-      size_t idx)
-{
-   return shader_action_parameter_right(type, label, true);
-}
-#endif
-
-static int action_select_cheat(const char *path, const char *label, unsigned type,
-      size_t idx)
-{
-   return action_right_cheat(type, label, true);
-}
-
-static int action_select_input_desc(const char *path, const char *label, unsigned type,
-      size_t idx)
-{
-   return action_right_input_desc(type, label, true);
-}
-
-static int action_select_input_desc_kbd(const char *path,
-      const char *label, unsigned type,
-   size_t idx)
-{
-   return action_right_input_desc_kbd(type, label, true);
-}
-
-#ifdef HAVE_NETWORKING
-static int action_select_netplay_connect_room(const char *path,
-      const char *label, unsigned type,
-      size_t idx)
-{
-   char tmp_hostname[4115];
-
-   tmp_hostname[0] = '\0';
-
-   if (netplay_driver_ctl(RARCH_NETPLAY_CTL_IS_DATA_INITED, NULL))
-      command_event(CMD_EVENT_NETPLAY_DEINIT, NULL);
-   netplay_driver_ctl(RARCH_NETPLAY_CTL_ENABLE_CLIENT, NULL);
-
-   if (netplay_room_list[idx - 3].host_method == NETPLAY_HOST_METHOD_MITM)
-      snprintf(tmp_hostname,
-            sizeof(tmp_hostname),
-            "%s|%d",
-            netplay_room_list[idx - 3].mitm_address,
-            netplay_room_list[idx - 3].mitm_port);
-   else
-      snprintf(tmp_hostname,
-            sizeof(tmp_hostname),
-            "%s|%d",
-            netplay_room_list[idx - 3].address,
-            netplay_room_list[idx - 3].port);
-
-   task_push_netplay_crc_scan(netplay_room_list[idx - 3].gamecrc,
-         netplay_room_list[idx - 3].gamename,
-         tmp_hostname, netplay_room_list[idx - 3].corename, netplay_room_list[idx - 3].subsystem_name);
-
-   return 0;
-}
-#endif
-
 static int menu_cbs_init_bind_select_compare_type(
       menu_file_list_cbs_t *cbs, unsigned type)
 {
-   if (type >= MENU_SETTINGS_CHEAT_BEGIN
-         && type <= MENU_SETTINGS_CHEAT_END)
+   switch (type)
    {
-      BIND_ACTION_SELECT(cbs, action_select_cheat);
-   }
-#if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
-   else if (type >= MENU_SETTINGS_SHADER_PARAMETER_0
-         && type <= MENU_SETTINGS_SHADER_PARAMETER_LAST)
-   {
-      BIND_ACTION_SELECT(cbs, shader_action_parameter_select);
-   }
-   else if (type >= MENU_SETTINGS_SHADER_PRESET_PARAMETER_0
-         && type <= MENU_SETTINGS_SHADER_PRESET_PARAMETER_LAST)
-   {
-      BIND_ACTION_SELECT(cbs, shader_action_parameter_preset_select);
-   }
-#endif
-   else if (type >= MENU_SETTINGS_INPUT_DESC_BEGIN
-         && type <= MENU_SETTINGS_INPUT_DESC_END)
-   {
-      BIND_ACTION_SELECT(cbs, action_select_input_desc);
-   }
-   else if (type >= MENU_SETTINGS_INPUT_DESC_KBD_BEGIN
-         && type <= MENU_SETTINGS_INPUT_DESC_KBD_END)
-   {
-      BIND_ACTION_SELECT(cbs, action_select_input_desc_kbd);
-   }
-   else
-   {
-
-      switch (type)
-      {
-         case FILE_TYPE_USE_DIRECTORY:
-            BIND_ACTION_SELECT(cbs, action_select_path_use_directory);
-            break;
-         default:
-            return -1;
-      }
+      case FILE_TYPE_USE_DIRECTORY:
+         BIND_ACTION_SELECT(cbs, action_select_path_use_directory);
+         break;
+      default:
+         return -1;
    }
 
    return 0;
-}
-
-static int menu_cbs_init_bind_select_compare_label(menu_file_list_cbs_t *cbs,
-      const char *label)
-{
-   return -1;
 }
 
 int menu_cbs_init_bind_select(menu_file_list_cbs_t *cbs,
@@ -249,23 +144,12 @@ int menu_cbs_init_bind_select(menu_file_list_cbs_t *cbs,
 
    BIND_ACTION_SELECT(cbs, action_select_default);
 
-#ifdef HAVE_NETWORKING
-   if (cbs->enum_idx == MENU_ENUM_LABEL_CONNECT_NETPLAY_ROOM)
-   {
-      BIND_ACTION_SELECT(cbs, action_select_netplay_connect_room);
-      return 0;
-   }
-#endif
-
    if ((type >= MENU_SETTINGS_CORE_OPTION_START) &&
        (type < MENU_SETTINGS_CHEEVOS_START))
    {
       BIND_ACTION_SELECT(cbs, action_select_core_setting);
       return 0;
    }
-
-   if (menu_cbs_init_bind_select_compare_label(cbs, label) == 0)
-      return 0;
 
    if (menu_cbs_init_bind_select_compare_type(cbs, type) == 0)
       return 0;

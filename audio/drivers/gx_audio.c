@@ -27,18 +27,17 @@
 #include <boolean.h>
 #include <retro_inline.h>
 
-#include "../../retroarch.h"
-#include "../../defines/gx_defines.h"
+#include <defines/gx_defines.h>
+
+#include "../audio_driver.h"
 
 typedef struct
 {
+   size_t write_ptr;
    uint32_t data[BLOCKS][CHUNK_FRAMES];
-
    volatile unsigned dma_busy;
    volatile unsigned dma_next;
    volatile unsigned dma_write;
-   size_t write_ptr;
-
    bool nonblock;
    bool is_paused;
 } gx_audio_t;
@@ -80,13 +79,14 @@ static void *gx_audio_init(const char *device,
    AIInit(NULL);
    AIRegisterDMACallback(dma_callback);
 
-   //ranges 0-32000 (default low) and 40000-47999 (in settings going down from 48000) -> set to 32000 hz
+   /* Ranges 0-32000 (default low) and 40000-47999 
+      (in settings going down from 48000) -> set to 32000 hz */
    if (rate <= 32000 || (rate >= 40000 && rate < 48000))
    {
       AISetDSPSampleRate(AI_SAMPLERATE_32KHZ);
       *new_rate = 32000;
    }
-   else //ranges 32001-39999 (in settings going up from 32000) and 48000-max (default high) -> set to 48000 hz
+   else /* Ranges 32001-39999 (in settings going up from 32000) and 48000-max (default high) -> set to 48000 hz */
    {
       AISetDSPSampleRate(AI_SAMPLERATE_48KHZ);
       *new_rate = 48000;
@@ -94,7 +94,7 @@ static void *gx_audio_init(const char *device,
 
    wa->dma_write = BLOCKS - 1;
    DCFlushRange(wa->data, sizeof(wa->data));
-   stop_audio = false;
+   stop_audio    = false;
    AIInitDMA((uint32_t)wa->data[wa->dma_next], CHUNK_SIZE);
    AIStartDMA();
 
@@ -109,7 +109,7 @@ static INLINE void copy_swapped(uint32_t * restrict dst,
    {
       uint32_t s = *src++;
       *dst++ = (s >> 16) | (s << 16);
-   }while(--size);
+   } while (--size);
 }
 
 static ssize_t gx_audio_write(void *data, const void *buf_, size_t size)

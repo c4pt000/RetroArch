@@ -51,48 +51,26 @@ enum rarch_path_type
    RARCH_PATH_CONFIG,
    RARCH_PATH_CONTENT,
    RARCH_PATH_CONFIG_APPEND,
+   RARCH_PATH_CONFIG_OVERRIDE,
    RARCH_PATH_CORE_OPTIONS,
    RARCH_PATH_DEFAULT_SHADER_PRESET,
    RARCH_PATH_BASENAME,
    RARCH_PATH_SUBSYSTEM
 };
 
-
-bool dir_init_shader(void);
-
-bool dir_free_shader(void);
-
-void dir_check_shader(bool pressed_next, bool pressed_prev);
-
-bool dir_is_empty(enum rarch_dir_type type);
-
 void dir_clear(enum rarch_dir_type type);
-
-void dir_clear_all(void);
 
 size_t dir_get_size(enum rarch_dir_type type);
 
 char *dir_get_ptr(enum rarch_dir_type type);
 
-const char *dir_get(enum rarch_dir_type type);
-
 void dir_set(enum rarch_dir_type type, const char *path);
 
-void dir_check_defaults(void);
-
-void path_deinit_subsystem(void);
+void dir_check_defaults(const char *custom_ini_path);
 
 void path_deinit_savefile(void);
 
-void path_init_savefile(void);
-
-void path_fill_names(void);
-
 bool path_set(enum rarch_path_type type, const char *path);
-
-void path_set_redirect(void);
-
-void path_set_special(char **argv, unsigned num_content);
 
 size_t path_get_realsize(enum rarch_path_type type);
 
@@ -103,8 +81,6 @@ char *path_get_ptr(enum rarch_path_type type);
 const char *path_get(enum rarch_path_type type);
 
 void path_clear(enum rarch_path_type type);
-
-void path_clear_all(void);
 
 bool path_is_empty(enum rarch_path_type type);
 

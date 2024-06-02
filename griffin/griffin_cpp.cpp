@@ -18,16 +18,25 @@
 #define HAVE_COMPRESSION 1
 #endif
 
+#if defined(_WIN32) && !defined(_XBOX)
+#define WIN32_LEAN_AND_MEAN
+#endif
+
 #if defined(_MSC_VER)
 #include <string.h>
 #include <compat/posix_string.h>
 #endif
 
-/*============================================================
-MENU
-============================================================ */
-#ifdef HAVE_XUI
-#include "../menu/drivers/xui.cpp"
+#if defined(HAVE_OPENGL) && defined(HAVE_ANGLE)
+#ifndef HAVE_OPENGLES
+#define HAVE_OPENGLES  1
+#endif
+#if !defined(HAVE_OPENGLES3) && !defined(HAVE_OPENGLES2)
+#define HAVE_OPENGLES3 1
+#endif
+#ifndef HAVE_EGL
+#define HAVE_EGL       1
+#endif
 #endif
 
 /*============================================================
@@ -42,54 +51,20 @@ UI
 
 #include "../ui/drivers/ui_qt.cpp"
 
-#include "../ui/drivers/qt/ui_qt_window.cpp"
-#include "../ui/drivers/qt/ui_qt_load_core_window.cpp"
-#include "../ui/drivers/qt/ui_qt_browser_window.cpp"
-#include "../ui/drivers/qt/ui_qt_msg_window.cpp"
-#include "../ui/drivers/qt/ui_qt_application.cpp"
 #include "../ui/drivers/qt/gridview.cpp"
-#if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
-#include "../ui/drivers/qt/shaderparamsdialog.cpp"
-#endif
-#include "../ui/drivers/qt/coreoptionsdialog.cpp"
-#include "../ui/drivers/qt/filedropwidget.cpp"
-#include "../ui/drivers/qt/coreinfodialog.cpp"
-#include "../ui/drivers/qt/playlistentrydialog.cpp"
-#include "../ui/drivers/qt/viewoptionsdialog.cpp"
+#include "../ui/drivers/qt/qt_dialogs.cpp"
+#include "../ui/drivers/qt/qt_widgets.cpp"
 #include "../ui/drivers/qt/qt_playlist.cpp"
-#include "../ui/drivers/qt/updateretroarch.cpp"
-#include "../ui/drivers/qt/thumbnaildownload.cpp"
-#include "../ui/drivers/qt/thumbnailpackdownload.cpp"
-#include "../ui/drivers/qt/playlistthumbnaildownload.cpp"
+#include "../ui/drivers/qt/qt_downloads.cpp"
 #ifdef HAVE_MENU
-#include "../ui/drivers/qt/settingswidgets.cpp"
-#include "../ui/drivers/qt/options/generic.cpp"
-#include "../ui/drivers/qt/options/video.cpp"
-#include "../ui/drivers/qt/options/audio.cpp"
-#include "../ui/drivers/qt/options/saving.cpp"
-#include "../ui/drivers/qt/options/osd.cpp"
-#include "../ui/drivers/qt/options/input.cpp"
-#include "../ui/drivers/qt/options/latency.cpp"
-#include "../ui/drivers/qt/options/playlists.cpp"
-#include "../ui/drivers/qt/options/user.cpp"
-#include "../ui/drivers/qt/options/recording.cpp"
-#include "../ui/drivers/qt/options/ui.cpp"
-#include "../ui/drivers/qt/options/achievements.cpp"
-#include "../ui/drivers/qt/options/network.cpp"
-#include "../ui/drivers/qt/moc_settingswidgets.cpp"
-#include "../ui/drivers/qt/options/moc_options.cpp"
+#include "../ui/drivers/qt/qt_options.cpp"
+#include "../ui/drivers/qt/moc_qt_options.cpp"
 #endif
 #include "../ui/drivers/moc_ui_qt.cpp"
-#include "../ui/drivers/qt/moc_coreinfodialog.cpp"
-#include "../ui/drivers/qt/moc_coreoptionsdialog.cpp"
-#include "../ui/drivers/qt/moc_filedropwidget.cpp"
 #include "../ui/drivers/qt/moc_gridview.cpp"
-#include "../ui/drivers/qt/moc_playlistentrydialog.cpp"
-#if defined(HAVE_CG) || defined(HAVE_GLSL) || defined(HAVE_SLANG) || defined(HAVE_HLSL)
-#include "../ui/drivers/qt/moc_shaderparamsdialog.cpp"
-#endif
 #include "../ui/drivers/qt/moc_ui_qt_load_core_window.cpp"
-#include "../ui/drivers/qt/moc_viewoptionsdialog.cpp"
+#include "../ui/drivers/qt/moc_qt_dialogs.cpp"
+#include "../ui/drivers/qt/moc_qt_widgets.cpp"
 #endif
 
 /*============================================================
@@ -100,11 +75,11 @@ VIDEO DRIVER
 #endif
 
 #if defined(HAVE_OPENGL_CORE)
-#include "../gfx/drivers_shader/shader_gl_core.cpp"
+#include "../gfx/drivers_shader/shader_gl3.cpp"
 #endif
 
 #if defined(HAVE_SPIRV_CROSS)
-#if defined(ENABLE_HLSL)
+#if defined(HAVE_HLSL)
 #include "../deps/SPIRV-Cross/spirv_hlsl.cpp"
 #endif
 #include "../deps/SPIRV-Cross/spirv_cross.cpp"
@@ -120,13 +95,6 @@ VIDEO DRIVER
 #endif
 #endif
 
-/*============================================================
-FONTS
-============================================================ */
-#if defined(_XBOX360)
-#include "../gfx/drivers_font/xdk360_fonts.cpp"
-#endif
-
 #ifdef WANT_GLSLANG
 #ifdef _WIN32
 #include "../deps/glslang/glslang/glslang/OSDependent/Windows/ossource.cpp"
@@ -137,6 +105,9 @@ FONTS
 #endif
 #endif
 
+/*============================================================
+FONTS
+============================================================ */
 #if defined(HAVE_DISCORD)
 #include "../deps/discord-rpc/src/discord_rpc.cpp"
 #include "../deps/discord-rpc/src/rpc_connection.cpp"

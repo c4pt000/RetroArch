@@ -49,17 +49,17 @@ typedef struct video_display_server
    bool (*set_window_progress)(void *data, int progress, bool finished);
    bool (*set_window_decorations)(void *data, bool on);
    bool (*set_resolution)(void *data, unsigned width,
-         unsigned height, int int_hz, float hz, int center, int monitor_index, int xoffset);
+         unsigned height, int int_hz, float hz, int center, int monitor_index, int xoffset, int padjust );
    void *(*get_resolution_list)(void *data,
          unsigned *size);
    const char *(*get_output_options)(void *data);
-   void (*set_screen_orientation)(enum rotation rotation);
-   enum rotation (*get_screen_orientation)(void);
+   void (*set_screen_orientation)(void *data, enum rotation rotation);
+   enum rotation (*get_screen_orientation)(void *data);
    uint32_t (*get_flags)(void *data);
    const char *ident;
 } video_display_server_t;
 
-void* video_display_server_init(void);
+void* video_display_server_init(enum rarch_display_type type);
 
 void video_display_server_destroy(void);
 
@@ -73,7 +73,7 @@ bool video_display_server_set_window_decorations(bool on);
 
 bool video_display_server_set_resolution(
       unsigned width, unsigned height,
-      int int_hz, float hz, int center, int monitor_index, int xoffset);
+      int int_hz, float hz, int center, int monitor_index, int xoffset, int padjust);
 
 void *video_display_server_get_resolution_list(unsigned *size);
 
@@ -87,12 +87,20 @@ bool video_display_server_can_set_screen_orientation(void);
 
 bool video_display_server_has_resolution_list(void);
 
+void video_switch_refresh_rate_maybe(float *refresh_rate, bool *video_switch_refresh_rate);
+
+bool video_display_server_set_refresh_rate(float hz);
+
+bool video_display_server_has_refresh_rate(float hz);
+
+void video_display_server_restore_refresh_rate(void);
+
 enum rotation video_display_server_get_screen_orientation(void);
 
 extern const video_display_server_t dispserv_win32;
 extern const video_display_server_t dispserv_x11;
+extern const video_display_server_t dispserv_kms;
 extern const video_display_server_t dispserv_android;
-extern const video_display_server_t dispserv_null;
 
 RETRO_END_DECLS
 

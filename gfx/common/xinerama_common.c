@@ -30,18 +30,19 @@
 
 #include "../../verbosity.h"
 
-static XineramaScreenInfo *xinerama_query_screens(Display *dpy, int *num_screens)
+static XineramaScreenInfo *xinerama_query_screens(
+      Display *dpy, int *num_screens)
 {
    int major, minor;
 
-   if (!XineramaQueryExtension(dpy, &major, &minor))
-      return NULL;
+   if (XineramaQueryExtension(dpy, &major, &minor))
+   {
+      XineramaQueryVersion(dpy, &major, &minor);
+      RARCH_LOG("[XINERAMA]: Xinerama version: %d.%d.\n", major, minor);
 
-   XineramaQueryVersion(dpy, &major, &minor);
-   RARCH_LOG("[XINERAMA]: Xinerama version: %d.%d.\n", major, minor);
-
-   if (XineramaIsActive(dpy))
-      return XineramaQueryScreens(dpy, num_screens);
+      if (XineramaIsActive(dpy))
+         return XineramaQueryScreens(dpy, num_screens);
+   }
 
    return NULL;
 }
@@ -130,5 +131,4 @@ void xinerama_save_last_used_monitor(Window win)
 
    RARCH_LOG("[XINERAMA]: Saved monitor #%u.\n", g_x11_screen);
 }
-
 #endif

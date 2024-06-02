@@ -26,8 +26,6 @@
 #include "../../config.h"
 #endif
 
-#include "../font_driver.h"
-
 #include "../../driver.h"
 
 #define XE_W 512
@@ -37,6 +35,28 @@
 #define UV_TOP 1
 #define UV_LEFT 2
 #define UV_RIGHT 3
+
+typedef struct DrawVerticeFormats
+{
+   float x, y, z, w;
+   unsigned int color;
+   float u, v;
+} DrawVerticeFormats;
+
+typedef struct xenon360_video xenon360_video_t;
+
+typedef struct xenos
+{
+   unsigned char *screen;
+   struct XenosVertexBuffer *vb;
+   struct XenosDevice *device;
+   struct XenosDevice real_device;
+   struct XenosShader *g_pVertexShader;
+   struct XenosShader *g_pPixelTexturedShader;
+   struct XenosSurface *g_pTexture;
+   bool quitting;
+} xenos_t;
+
 
 /* pixel shader */
 const unsigned int g_xps_PS[] =
@@ -70,52 +90,20 @@ const unsigned int g_xvs_VS[] =
    0x00000000, 0x00000000, 0x00000000
 };
 
-typedef struct DrawVerticeFormats
-{
-   float x, y, z, w;
-   unsigned int color;
-   float u, v;
-} DrawVerticeFormats;
-
-typedef struct xenon360_video xenon360_video_t;
-
-static bool g_quitting;
-
-typedef struct gl
-{
-   unsigned char *screen;
-   struct XenosVertexBuffer *vb;
-   struct XenosDevice * gl_device;
-   struct XenosDevice real_device;
-   struct XenosShader * g_pVertexShader;
-   struct XenosShader * g_pPixelTexturedShader;
-   struct XenosSurface * g_pTexture;
-} gl_t;
-
 static float ScreenUv[4] = {0.f, 1.0f, 1.0f, 0.f};
 
-static void xenon360_gfx_free(void *data)
+static void xenon360_free(void *data)
 {
-   gl_t *vid = data;
-   if (!vid)
+   xenos_t *xenos = data;
+   if (!xenos)
       return;
 
-   free(vid);
+   free(xenos);
 }
 
-static void *xenon360_gfx_init(const video_info_t *video,
+static void *xenon360_init(const video_info_t *video,
       input_driver_t **input, void **input_data)
 {
-   gl_t * gl = calloc(1, sizeof(gl_t));
-   if (!gl)
-      return NULL;
-
-   gl->gl_device = &gl->real_device;
-
-   Xe_Init(gl->gl_device);
-
-   Xe_SetRenderTarget(gl->gl_device, Xe_GetFramebufferSurface(gl->gl_device));
-
    static const struct XenosVBFFormat vbf =
    {
       3,
@@ -125,191 +113,183 @@ static void *xenon360_gfx_init(const video_info_t *video,
 	 {XE_USAGE_TEXCOORD, 0, XE_TYPE_FLOAT2},
       }
    };
-
-   gl->g_pPixelTexturedShader = Xe_LoadShaderFromMemory(gl->gl_device, (void*)g_xps_PS);
-   Xe_InstantiateShader(gl->gl_device, gl->g_pPixelTexturedShader, 0);
-
-   gl->g_pVertexShader = Xe_LoadShaderFromMemory(gl->gl_device, (void*)g_xvs_VS);
-   Xe_InstantiateShader(gl->gl_device, gl->g_pVertexShader, 0);
-   Xe_ShaderApplyVFetchPatches(gl->gl_device, gl->g_pVertexShader, 0, &vbf);
-
-   gl->g_pTexture = Xe_CreateTexture(gl->gl_device, XE_W, XE_H, 1, XE_FMT_5551 | XE_FMT_16BE, 0);
-   gl->g_pTexture->use_filtering = 1;
-
-   edram_init(gl->gl_device);
-
+   int i          = 0;
    /* enable filtering for now */
+   float x        = -1.0f;
+   float y        = 1.0f;
+   float w        = 4.0f;
+   float h        = 4.0f;
+   xenos_t *xenos = calloc(1, sizeof(xenos_t));
+   if (!xenos)
+      return NULL;
 
-   float x = -1.0f;
-   float y = 1.0f;
-   float w = 4.0f;
-   float h = 4.0f;
+   xenos->device = &xenos->real_device;
 
-   gl->vb = Xe_CreateVertexBuffer(gl->gl_device, 3 * sizeof(DrawVerticeFormats));
-   DrawVerticeFormats *Rect = Xe_VB_Lock(gl->gl_device, gl->vb, 0, 3 * sizeof (DrawVerticeFormats), XE_LOCK_WRITE);
+   Xe_Init(xenos->device);
 
-   ScreenUv[UV_TOP] = ScreenUv[UV_TOP] * 2;
+   Xe_SetRenderTarget(xenos->device, Xe_GetFramebufferSurface(xenos->device));
+
+   xenos->g_pPixelTexturedShader = Xe_LoadShaderFromMemory(
+         xenos->device, (void*)g_xps_PS);
+   Xe_InstantiateShader(xenos->device, xenos->g_pPixelTexturedShader, 0);
+
+   xenos->g_pVertexShader = Xe_LoadShaderFromMemory(xenos->device, (void*)g_xvs_VS);
+   Xe_InstantiateShader(xenos->device, xenos->g_pVertexShader, 0);
+   Xe_ShaderApplyVFetchPatches(xenos->device, xenos->g_pVertexShader, 0, &vbf);
+
+   xenos->g_pTexture = Xe_CreateTexture(xenos->device, XE_W, XE_H, 1, XE_FMT_5551 | XE_FMT_16BE, 0);
+   xenos->g_pTexture->use_filtering = 1;
+
+   edram_init(xenos->device);
+
+   xenos->vb = Xe_CreateVertexBuffer(xenos->device, 3 * sizeof(DrawVerticeFormats));
+   DrawVerticeFormats *Rect = Xe_VB_Lock(xenos->device,
+         xenos->vb, 0, 3 * sizeof (DrawVerticeFormats), XE_LOCK_WRITE);
+
+   ScreenUv[UV_TOP]  = ScreenUv[UV_TOP] * 2;
    ScreenUv[UV_LEFT] = ScreenUv[UV_LEFT] * 2;
 
-   /* top left */
-   Rect[0].x = x;
-   Rect[0].y = y;
-   Rect[0].u = ScreenUv[UV_BOTTOM];
-   Rect[0].v = ScreenUv[UV_RIGHT];
-   Rect[0].color = 0;
+   /* Top left */
+   Rect[0].x         = x;
+   Rect[0].y         = y;
+   Rect[0].u         = ScreenUv[UV_BOTTOM];
+   Rect[0].v         = ScreenUv[UV_RIGHT];
+   Rect[0].color     = 0;
 
-   /* bottom left */
-   Rect[1].x = x;
-   Rect[1].y = y - h;
-   Rect[1].u = ScreenUv[UV_BOTTOM];
-   Rect[1].v = ScreenUv[UV_LEFT];
-   Rect[1].color = 0;
+   /* Bottom left */
+   Rect[1].x         = x;
+   Rect[1].y         = y - h;
+   Rect[1].u         = ScreenUv[UV_BOTTOM];
+   Rect[1].v         = ScreenUv[UV_LEFT];
+   Rect[1].color     = 0;
 
-   /* top right */
-   Rect[2].x = x + w;
-   Rect[2].y = y;
-   Rect[2].u = ScreenUv[UV_TOP];
-   Rect[2].v = ScreenUv[UV_RIGHT];
-   Rect[2].color = 0;
+   /* Top right */
+   Rect[2].x         = x + w;
+   Rect[2].y         = y;
+   Rect[2].u         = ScreenUv[UV_TOP];
+   Rect[2].v         = ScreenUv[UV_RIGHT];
+   Rect[2].color     = 0;
 
-   Rect[3].x = x + w;
-   Rect[3].y = y;
-   Rect[3].u = ScreenUv[UV_TOP];
-   Rect[3].v = ScreenUv[UV_RIGHT];
-   Rect[3].color = 0;
+   Rect[3].x         = x + w;
+   Rect[3].y         = y;
+   Rect[3].u         = ScreenUv[UV_TOP];
+   Rect[3].v         = ScreenUv[UV_RIGHT];
+   Rect[3].color     = 0;
 
-   int i = 0;
    for (i = 0; i < 3; i++)
    {
-      Rect[i].z = 0.0;
-      Rect[i].w = 1.0;
+      Rect[i].z      = 0.0;
+      Rect[i].w      = 1.0;
    }
 
-   Xe_VB_Unlock(gl->gl_device, gl->vb);
+   Xe_VB_Unlock(xenos->device, xenos->vb);
 
-   Xe_SetClearColor(gl->gl_device, 0);
+   Xe_SetClearColor(xenos->device, 0);
 
-   return gl;
+   return xenos;
 }
 
-static bool xenon360_gfx_frame(void *data, const void *frame, unsigned width, unsigned height,
-      uint64_t frame_count, unsigned pitch, const char *msg, video_frame_info_t *video_info)
+static bool xenon360_frame(void *data,
+      const void *frame, unsigned width, unsigned height,
+      uint64_t frame_count, unsigned pitch, const char *msg,
+      video_frame_info_t *video_info)
 {
-   gl_t *vid = data;
+   unsigned y;
+   uint16_t *dest;
+   const uint16_t *src;
+   unsigned stride_in, stride_out, copy_size;
+   xenos_t *xenos           = (xenos_t*)data;
+#ifdef HAVE_MENU
+   bool menu_is_alive       = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
+#endif
+   DrawVerticeFormats *Rect = Xe_VB_Lock(xenos->device, xenos->vb,
+		   0, 3 * sizeof(DrawVerticeFormats), XE_LOCK_WRITE);
 
-   ScreenUv[UV_TOP]	= ((float) (width) / (float) XE_W)*2;
-   ScreenUv[UV_LEFT]	= ((float) (height) / (float) XE_H)*2;
+   ScreenUv[UV_TOP]	       = ((float)(width)  / (float)XE_W) * 2;
+   ScreenUv[UV_LEFT]	       = ((float)(height) / (float)XE_H) * 2;
 
-   DrawVerticeFormats * Rect = Xe_VB_Lock(vid->gl_device, vid->vb, 0, 3 * sizeof(DrawVerticeFormats), XE_LOCK_WRITE);
+   /* Bottom left */
+   Rect[1].v                = ScreenUv[UV_LEFT];
+   Rect[2].u                = ScreenUv[UV_TOP];
 
-   /* bottom left */
-   Rect[1].v = ScreenUv[UV_LEFT];
-   Rect[2].u = ScreenUv[UV_TOP];
-
-   Xe_VB_Unlock(vid->gl_device, vid->vb);
+   Xe_VB_Unlock(xenos->device, xenos->vb);
 
    /* Refresh texture cache */
-   uint16_t *dst       = Xe_Surface_LockRect(vid->gl_device, vid->g_pTexture, 0, 0, 0, 0, XE_LOCK_WRITE);
-   const uint16_t *src = frame;
-   unsigned stride_in  = pitch >>1;
-   unsigned stride_out = vid->g_pTexture->wpitch >> 1;
-   unsigned copy_size  = width << 1;
+   dst                      = Xe_Surface_LockRect(xenos->device, xenos->g_pTexture, 0, 0, 0, 0, XE_LOCK_WRITE);
+   src                      = frame;
+   stride_in                = pitch >>1;
+   stride_out               = xenos->g_pTexture->wpitch >> 1;
+   copy_size                = width << 1;
 
-   for (unsigned y = 0; y < height; y++, dst += stride_out, src += stride_in)
+   for (y = 0; y < height; y++, dst += stride_out, src += stride_in)
       memcpy(dst, src, copy_size);
-   Xe_Surface_Unlock(vid->gl_device, vid->g_pTexture);
+   Xe_Surface_Unlock(xenos->device, xenos->g_pTexture);
 
    /* Reset states */
-   Xe_InvalidateState(vid->gl_device);
-   Xe_SetClearColor(vid->gl_device, 0);
+   Xe_InvalidateState(xenos->device);
+   Xe_SetClearColor(xenos->device, 0);
 
    /* Select stream */
-   Xe_SetTexture(vid->gl_device, 0, vid->g_pTexture);
-   Xe_SetCullMode(vid->gl_device, XE_CULL_NONE);
-   Xe_SetStreamSource(vid->gl_device, 0, vid->vb, 0, sizeof(DrawVerticeFormats));
+   Xe_SetTexture(xenos->device, 0, xenos->g_pTexture);
+   Xe_SetCullMode(xenos->device, XE_CULL_NONE);
+   Xe_SetStreamSource(xenos->device, 0, xenos->vb, 0,
+         sizeof(DrawVerticeFormats));
 
    /* Select shaders */
-   Xe_SetShader(vid->gl_device, SHADER_TYPE_PIXEL, vid->g_pPixelTexturedShader, 0);
-   Xe_SetShader(vid->gl_device, SHADER_TYPE_VERTEX, vid->g_pVertexShader, 0);
+   Xe_SetShader(xenos->device, SHADER_TYPE_PIXEL,
+         xenos->g_pPixelTexturedShader, 0);
+   Xe_SetShader(xenos->device, SHADER_TYPE_VERTEX,
+         xenos->g_pVertexShader, 0);
 
 #ifdef HAVE_MENU
-   menu_driver_frame(video_info);
+   menu_driver_frame(menu_is_alive, video_info);
 #endif
 
    /* Draw */
-   Xe_DrawPrimitive(vid->gl_device, XE_PRIMTYPE_TRIANGLELIST, 0, 1);
+   Xe_DrawPrimitive(xenos->device, XE_PRIMTYPE_TRIANGLELIST, 0, 1);
 
    /* Resolve */
-   Xe_Resolve(vid->gl_device);
-   Xe_Sync(vid->gl_device);
+   Xe_Resolve(xenos->device);
+   Xe_Sync(xenos->device);
 
    return true;
 }
 
-static void xenon360_gfx_set_nonblock_state(void *data, bool state)
+static bool xenon360_alive(void *data)
 {
-   (void)data;
-   (void)state;
+   xenos_t *xenos = (xenos_t*)data;
+   return !xenos->quitting;
 }
 
-static bool xenon360_gfx_alive(void *data)
-{
-   (void)data;
-   return !g_quitting;
-}
-
-static bool xenon360_gfx_focus(void *data)
-{
-   (void)data;
-   return true;
-}
-
-static bool xenon360_gfx_suppress_screensaver(void *data, bool enable)
-{
-   (void)data;
-   (void)enable;
-   return false;
-}
-
-static bool xenon360_gfx_set_shader(void *data,
-      enum rarch_shader_type type, const char *path)
-{
-   (void)data;
-   (void)type;
-   (void)path;
-
-   return false;
-}
-
-static void xenon360_gfx_get_poke_interface(void *data,
-      const video_poke_interface_t **iface)
-{
-   (void)data;
-   (void)iface;
-}
+static void xenon360_set_nonblock_state(void *a, bool b, bool c, unsigned d) { }
+static bool xenon360_focus(void *data) { return true; }
+static bool xenon360_suppress_screensaver(void *data, bool enable) { return false; }
+static bool xenon360_set_shader(void *data,
+      enum rarch_shader_type type, const char *path) { return false; }
+static void xenon360_get_poke_interface(void *data,
+      const video_poke_interface_t **iface) { }
 
 video_driver_t video_xenon360 = {
-   xenon360_gfx_init,
-   xenon360_gfx_frame,
-   xenon360_gfx_set_nonblock_state,
-   xenon360_gfx_alive,
-   xenon360_gfx_focus,
-   xenon360_gfx_suppress_screensaver,
+   xenon360_init,
+   xenon360_frame,
+   xenon360_set_nonblock_state,
+   xenon360_alive,
+   xenon360_focus,
+   xenon360_suppress_screensaver,
    NULL, /* has_windowed */
-   xenon360_gfx_set_shader,
-   xenon360_gfx_free,
+   xenon360_set_shader,
+   xenon360_free,
    "xenon360",
    NULL, /* set_viewport */
    NULL, /* set_rotation */
    NULL, /* viewport_info */
    NULL, /* read_viewport */
    NULL, /* read_frame_raw */
-
 #ifdef HAVE_OVERLAY
-   NULL, /* overlay_interface */
+   NULL, /* get_overlay_interface */
 #endif
-#ifdef HAVE_VIDEO_LAYOUT
-  NULL,
+   xenon360_get_poke_interface,
+#ifdef HAVE_GFX_WIDGETS
+   NULL  /* gfx_widgets_enabled */
 #endif
-   xenon360_gfx_get_poke_interface
 };

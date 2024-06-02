@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <stdio.h>
 #include <compat/strl.h>
+#include "glslang_util.h"
 #include "../../verbosity.h"
 
 using namespace std;
@@ -51,72 +52,14 @@ static const char *semantic_uniform_names[] = {
    "FinalViewportSize",
    "FrameCount",
    "FrameDirection",
+   "Rotation",
+   "TotalSubFrames",
+   "CurrentSubFrame",
 };
 
-static bool slang_texture_semantic_is_array(slang_texture_semantic sem)
-{
-   switch (sem)
-   {
-      case SLANG_TEXTURE_SEMANTIC_ORIGINAL_HISTORY:
-      case SLANG_TEXTURE_SEMANTIC_PASS_OUTPUT:
-      case SLANG_TEXTURE_SEMANTIC_PASS_FEEDBACK:
-      case SLANG_TEXTURE_SEMANTIC_USER:
-         return true;
-
-      default:
-         break;
-   }
-
-   return false;
-}
-
-slang_reflection::slang_reflection()
-{
-   unsigned i;
-
-   for (i = 0; i < SLANG_NUM_TEXTURE_SEMANTICS; i++)
-      semantic_textures[i].resize(
-            slang_texture_semantic_is_array(
-               static_cast<slang_texture_semantic>(i))
-            ? 0 : 1);
-}
-
-static slang_texture_semantic slang_name_to_texture_semantic_array(
-      const string &name, const char **names,
-      unsigned *index)
-{
-   unsigned i = 0;
-   while (*names)
-   {
-      const char                   *n = *names;
-      slang_texture_semantic semantic = static_cast<slang_texture_semantic>(i);
-
-      if (slang_texture_semantic_is_array(semantic))
-      {
-         size_t baselen = strlen(n);
-         int        cmp = strncmp(n, name.c_str(), baselen);
-
-         if (cmp == 0)
-         {
-            *index = (unsigned)strtoul(name.c_str() + baselen, nullptr, 0);
-            return semantic;
-         }
-      }
-      else if (name == n)
-      {
-         *index = 0;
-         return semantic;
-      }
-
-      i++;
-      names++;
-   }
-   return SLANG_INVALID_TEXTURE_SEMANTIC;
-}
-
 static slang_texture_semantic slang_name_to_texture_semantic(
-      const unordered_map<string, slang_texture_semantic_map> &semantic_map,
-      const string &name, unsigned *index)
+      const std::unordered_map<std::string, slang_texture_semantic_map> &semantic_map,
+      const std::string &name, unsigned *index)
 {
    auto itr = semantic_map.find(name);
    if (itr != end(semantic_map))
@@ -126,12 +69,12 @@ static slang_texture_semantic slang_name_to_texture_semantic(
    }
 
    return slang_name_to_texture_semantic_array(
-         name, texture_semantic_names, index);
+         name.c_str(), texture_semantic_names, index);
 }
 
 static slang_texture_semantic slang_uniform_name_to_texture_semantic(
-      const unordered_map<string, slang_texture_semantic_map> &semantic_map,
-      const string &name, unsigned *index)
+      const std::unordered_map<std::string, slang_texture_semantic_map> &semantic_map,
+      const std::string &name, unsigned *index)
 {
    auto itr = semantic_map.find(name);
    if (itr != end(semantic_map))
@@ -140,13 +83,13 @@ static slang_texture_semantic slang_uniform_name_to_texture_semantic(
       return itr->second.semantic;
    }
 
-   return slang_name_to_texture_semantic_array(name,
+   return slang_name_to_texture_semantic_array(name.c_str(),
          texture_semantic_uniform_names, index);
 }
 
 static slang_semantic slang_uniform_name_to_semantic(
-      const unordered_map<string, slang_semantic_map> &semantic_map,
-      const string &name, unsigned *index)
+      const std::unordered_map<std::string, slang_semantic_map> &semantic_map,
+      const std::string &name, unsigned *index)
 {
    unsigned i = 0;
    auto itr   = semantic_map.find(name);
@@ -183,9 +126,9 @@ static bool set_ubo_texture_offset(
       size_t offset, bool push_constant)
 {
    resize_minimum(reflection->semantic_textures[semantic], index + 1);
-   auto &sem           = reflection->semantic_textures[semantic][index];
-   auto &active        = push_constant ? sem.push_constant : sem.uniform;
-   auto &active_offset = push_constant ? sem.push_constant_offset : sem.ubo_offset;
+   slang_texture_semantic_meta &sem = reflection->semantic_textures[semantic][index];
+   bool &active                     = push_constant ? sem.push_constant : sem.uniform;
+   size_t &active_offset            = push_constant ? sem.push_constant_offset : sem.ubo_offset;
 
    if (active)
    {
@@ -213,9 +156,9 @@ static bool set_ubo_float_parameter_offset(
       bool push_constant)
 {
    resize_minimum(reflection->semantic_float_parameters, index + 1);
-   auto &sem           = reflection->semantic_float_parameters[index];
-   auto &active        = push_constant ? sem.push_constant : sem.uniform;
-   auto &active_offset = push_constant ? sem.push_constant_offset : sem.ubo_offset;
+   slang_semantic_meta &sem = reflection->semantic_float_parameters[index];
+   bool   &active           = push_constant ? sem.push_constant : sem.uniform;
+   size_t &active_offset    = push_constant ? sem.push_constant_offset : sem.ubo_offset;
 
    if (active)
    {
@@ -252,9 +195,9 @@ static bool set_ubo_offset(
       slang_semantic semantic,
       size_t offset, unsigned num_components, bool push_constant)
 {
-   auto &sem           = reflection->semantics[semantic];
-   auto &active        = push_constant ? sem.push_constant : sem.uniform;
-   auto &active_offset = push_constant ? sem.push_constant_offset : sem.ubo_offset;
+   slang_semantic_meta &sem = reflection->semantics[semantic];
+   bool &active             = push_constant ? sem.push_constant : sem.uniform;
+   size_t &active_offset    = push_constant ? sem.push_constant_offset : sem.ubo_offset;
 
    if (active)
    {
@@ -303,8 +246,17 @@ static bool validate_type_for_semantic(const SPIRType &type, slang_semantic sem)
       case SLANG_SEMANTIC_FRAME_COUNT:
          return type.basetype == SPIRType::UInt  && type.vecsize == 1 && type.columns == 1;
          /* int */
+      case SLANG_SEMANTIC_TOTAL_SUBFRAMES:
+         return type.basetype == SPIRType::UInt  && type.vecsize == 1 && type.columns == 1;
+         /* int */
+      case SLANG_SEMANTIC_CURRENT_SUBFRAME:
+         return type.basetype == SPIRType::UInt  && type.vecsize == 1 && type.columns == 1;
+         /* int */
       case SLANG_SEMANTIC_FRAME_DIRECTION:
          return type.basetype == SPIRType::Int   && type.vecsize == 1 && type.columns == 1;
+         /* uint */
+      case SLANG_SEMANTIC_ROTATION:
+         return type.basetype == SPIRType::UInt  && type.vecsize == 1 && type.columns == 1;
          /* float */
       case SLANG_SEMANTIC_FLOAT_PARAMETER:
          return type.basetype == SPIRType::Float && type.vecsize == 1 && type.columns == 1;
@@ -337,9 +289,9 @@ static bool add_active_buffer_ranges(
    {
       unsigned sem_index             = 0;
       unsigned tex_sem_index         = 0;
-      auto &name                     = compiler.get_member_name(
+      const std::string &name        = compiler.get_member_name(
             resource.base_type_id, ranges[i].index);
-      auto &type                     = compiler.get_type(
+      const SPIRType &type           = compiler.get_type(
             compiler.get_type(resource.base_type_id).member_types[
             ranges[i].index]);
       slang_semantic sem             = slang_uniform_name_to_semantic(
@@ -396,11 +348,24 @@ static bool add_active_buffer_ranges(
       }
       else
       {
+         /* TODO - Try to print name */
          RARCH_ERR("[slang]: Unknown semantic found.\n");
          return false;
       }
    }
    return true;
+}
+
+
+slang_reflection::slang_reflection()
+{
+   unsigned i;
+
+   for (i = 0; i < SLANG_NUM_TEXTURE_SEMANTICS; i++)
+      semantic_textures[i].resize(
+            slang_texture_semantic_is_array(
+               static_cast<slang_texture_semantic>(i))
+            ? 0 : 1);
 }
 
 bool slang_reflect(
@@ -416,15 +381,15 @@ bool slang_reflect(
 
    /* Validate use of unexpected types. */
    if (
-         !vertex.sampled_images.empty()    ||
-         !vertex.storage_buffers.empty()   ||
-         !vertex.subpass_inputs.empty()    ||
-         !vertex.storage_images.empty()    ||
-         !vertex.atomic_counters.empty()   ||
-         !fragment.storage_buffers.empty() ||
-         !fragment.subpass_inputs.empty()  ||
-         !fragment.storage_images.empty()  ||
-         !fragment.atomic_counters.empty())
+            !vertex.sampled_images.empty()
+         || !vertex.storage_buffers.empty()
+         || !vertex.subpass_inputs.empty()
+         || !vertex.storage_images.empty()
+         || !vertex.atomic_counters.empty()
+         || !fragment.storage_buffers.empty()
+         || !fragment.subpass_inputs.empty()
+         || !fragment.storage_images.empty()
+         || !fragment.atomic_counters.empty())
    {
       RARCH_ERR("[slang]: Invalid resource type detected.\n");
       return false;
@@ -487,10 +452,10 @@ bool slang_reflect(
       return false;
    }
 
-   uint32_t vertex_ubo    = vertex.uniform_buffers.empty() ? 0 : vertex.uniform_buffers[0].id;
-   uint32_t fragment_ubo  = fragment.uniform_buffers.empty() ? 0 : fragment.uniform_buffers[0].id;
-   uint32_t vertex_push   = vertex.push_constant_buffers.empty() ? 0 : vertex.push_constant_buffers[0].id;
-   uint32_t fragment_push = fragment.push_constant_buffers.empty() ? 0 : fragment.push_constant_buffers[0].id;
+   uint32_t vertex_ubo    = vertex.uniform_buffers.empty() ? 0 : (uint32_t)vertex.uniform_buffers[0].id;
+   uint32_t fragment_ubo  = fragment.uniform_buffers.empty() ? 0 : (uint32_t)fragment.uniform_buffers[0].id;
+   uint32_t vertex_push   = vertex.push_constant_buffers.empty() ? 0 : (uint32_t)vertex.push_constant_buffers[0].id;
+   uint32_t fragment_push = fragment.push_constant_buffers.empty() ? 0 : (uint32_t)fragment.push_constant_buffers[0].id;
 
    if (vertex_ubo &&
          vertex_compiler.get_decoration(
@@ -648,7 +613,10 @@ bool slang_reflect(
       }
       else if (index == SLANG_INVALID_TEXTURE_SEMANTIC)
       {
-         RARCH_ERR("[slang]: Non-semantic textures not supported yet.\n");
+         RARCH_ERR("[slang]: Texture name '%s' not found in semantic map, "
+                   "Probably the texture name or pass alias is not defined "
+                   "in the preset (Non-semantic textures not supported yet)\n", 
+                   fragment.sampled_images[i].name.c_str());
          return false;
       }
 
@@ -660,6 +628,7 @@ bool slang_reflect(
       semantic.texture                      = true;
    }
 
+#ifdef DEBUG
    RARCH_LOG("[slang]: Reflection\n");
    RARCH_LOG("[slang]:   Textures:\n");
 
@@ -726,9 +695,9 @@ bool slang_reflect(
 
    {
       char buf[64];
-      buf[0] = '\0';
-      snprintf(buf, sizeof(buf),
-            "[slang]:\n%s [slang]:   Parameters:\n", FILE_PATH_LOG_INFO);
+      size_t _len = strlcpy(buf, "[slang]:\n", sizeof(buf));
+      _len       += strlcpy(buf + _len, FILE_PATH_LOG_INFO, sizeof(buf) - _len);
+      strlcpy(buf + _len, " [slang]:   Parameters:\n", sizeof(buf) - _len);
       RARCH_LOG(buf);
    }
 
@@ -747,6 +716,7 @@ bool slang_reflect(
          RARCH_LOG("[slang]:     #%u (PushOffset: %u)\n", i,
                (unsigned int)param->push_constant_offset);
    }
+#endif
 
    return true;
 }

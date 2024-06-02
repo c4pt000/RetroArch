@@ -21,7 +21,6 @@
 #include <pspgum.h>
 #include <psprtc.h>
 
-#include <retro_assert.h>
 #include <retro_inline.h>
 #include <retro_math.h>
 
@@ -33,9 +32,7 @@
 #include "../../menu/menu_driver.h"
 #endif
 
-#include "../font_driver.h"
-
-#include "../../defines/psp_defines.h"
+#include <defines/psp_defines.h>
 
 #ifndef SCEGU_SCR_WIDTH
 #define SCEGU_SCR_WIDTH 480
@@ -94,29 +91,25 @@ typedef struct psp1_menu_frame
 
 typedef struct psp1_video
 {
+   psp1_menu_frame_t menu;
+   video_viewport_t vp;
    void* main_dList;
    void* frame_dList;
    void* draw_buffer;
    void* texture;
-   psp1_sprite_t* frame_coords;
+   psp1_sprite_t *frame_coords;
    int tex_filter;
-
+   int bpp_log2;
+   unsigned rotation;
    bool vsync;
    bool rgb32;
-   int bpp_log2;
-
-   psp1_menu_frame_t menu;
-
-   video_viewport_t vp;
-
-   unsigned rotation;
    bool vblank_not_reached;
    bool keep_aspect;
    bool should_resize;
    bool hw_render;
 } psp1_video_t;
 
-// both row and column count need to be a power of 2
+/* Both row and column count need to be a power of 2 */
 #define PSP_FRAME_ROWS_COUNT     4
 #define PSP_FRAME_COLUMNS_COUNT  16
 #define PSP_FRAME_SLICE_COUNT    (PSP_FRAME_ROWS_COUNT * PSP_FRAME_COLUMNS_COUNT)
@@ -131,8 +124,8 @@ static INLINE void psp_set_screen_coords (psp1_sprite_t* framecoords,
 
    if (rotation == 0)
    {
-      x0 = x;
-      y0 = y;
+      x0     = x;
+      y0     = y;
       step_x = ((float) width)  / PSP_FRAME_COLUMNS_COUNT;
       step_y = ((float) height) / PSP_FRAME_ROWS_COUNT;
 
@@ -154,8 +147,8 @@ static INLINE void psp_set_screen_coords (psp1_sprite_t* framecoords,
    }
    else if (rotation == 1) /* 90° */
    {
-      x0 = x + width;
-      y0 = y;
+      x0     = x + width;
+      y0     = y;
       step_x = -((float) width) / PSP_FRAME_ROWS_COUNT;
       step_y = ((float) height)  / PSP_FRAME_COLUMNS_COUNT;
 
@@ -177,8 +170,8 @@ static INLINE void psp_set_screen_coords (psp1_sprite_t* framecoords,
    }
    else if (rotation == 2) /* 180° */
    {
-      x0 = x + width;
-      y0 = y + height;
+      x0     = x + width;
+      y0     = y + height;
       step_x = -((float) width)  / PSP_FRAME_COLUMNS_COUNT;
       step_y = -((float) height) / PSP_FRAME_ROWS_COUNT;
 
@@ -200,8 +193,8 @@ static INLINE void psp_set_screen_coords (psp1_sprite_t* framecoords,
    }
    else /* 270° */
    {
-      x0 = x;
-      y0 = y + height;
+      x0     = x;
+      y0     = y + height;
       step_x = ((float) width)  / PSP_FRAME_ROWS_COUNT;
       step_y = -((float) height) / PSP_FRAME_COLUMNS_COUNT;
 
@@ -250,7 +243,87 @@ static INLINE void psp_set_tex_coords (psp1_sprite_t* framecoords,
 }
 
 static void psp_update_viewport(psp1_video_t* psp,
-      video_frame_info_t *video_info);
+      video_frame_info_t *video_info)
+{
+   int x                     = 0;
+   int y                     = 0;
+   float device_aspect       = ((float)SCEGU_SCR_WIDTH) / SCEGU_SCR_HEIGHT;
+   float width               = SCEGU_SCR_WIDTH;
+   float height              = SCEGU_SCR_HEIGHT;
+   settings_t *settings      = config_get_ptr();
+   bool video_scale_integer  = settings->bools.video_scale_integer;
+   unsigned aspect_ratio_idx = settings->uints.video_aspect_ratio_idx;
+
+   if (video_scale_integer)
+   {
+      video_viewport_get_scaled_integer(&psp->vp, SCEGU_SCR_WIDTH,
+            SCEGU_SCR_HEIGHT, video_driver_get_aspect_ratio(), psp->keep_aspect);
+      width  = psp->vp.width;
+      height = psp->vp.height;
+   }
+   else if (psp->keep_aspect)
+   {
+#if defined(HAVE_MENU)
+      if (aspect_ratio_idx == ASPECT_RATIO_CUSTOM)
+      {
+         x      = video_info->custom_vp_x;
+         y      = video_info->custom_vp_y;
+         width  = video_info->custom_vp_width;
+         height = video_info->custom_vp_height;
+      }
+      else
+#endif
+      {
+         float delta;
+         float desired_aspect = video_driver_get_aspect_ratio();
+
+         if (     (fabsf(device_aspect - desired_aspect) < 0.0001f)
+               || (fabsf((16.0/9.0)    - desired_aspect) < 0.02f))
+         {
+            /* If the aspect ratios of screen and desired aspect
+             * ratio are sufficiently equal (floating point stuff),
+             * assume they are actually equal.
+             */
+         }
+         else if (device_aspect > desired_aspect)
+         {
+            delta = (desired_aspect / device_aspect - 1.0f)
+               / 2.0f + 0.5f;
+            x     = (int)roundf(width * (0.5f - delta));
+            width = (unsigned)roundf(2.0f * width * delta);
+         }
+         else
+         {
+            delta  = (device_aspect / desired_aspect - 1.0f)
+               / 2.0f + 0.5f;
+            y      = (int)roundf(height * (0.5f - delta));
+            height = (unsigned)roundf(2.0f * height * delta);
+         }
+      }
+
+      psp->vp.x      = x;
+      psp->vp.y      = y;
+      psp->vp.width  = width;
+      psp->vp.height = height;
+   }
+   else
+   {
+      psp->vp.x      = 0;
+      psp->vp.y      = 0;
+      psp->vp.width  = width;
+      psp->vp.height = height;
+   }
+
+   psp->vp.width  += psp->vp.width  & 0x1;
+   psp->vp.height += psp->vp.height & 0x1;
+
+   psp_set_screen_coords(psp->frame_coords, psp->vp.x,
+         psp->vp.y, psp->vp.width, psp->vp.height, psp->rotation);
+
+   psp->should_resize = false;
+
+}
+
 
 static void psp_on_vblank(u32 sub, psp1_video_t *psp)
 {
@@ -324,7 +397,7 @@ static void *psp_init(const video_info_t *video,
    psp->vsync               = video->vsync;
    psp->rgb32               = video->rgb32;
 
-   if(psp->rgb32)
+   if (psp->rgb32)
    {
       u32 i;
       uint32_t* LUT_r_local = (uint32_t*)(SCEGU_VRAM_BP32_2);
@@ -356,6 +429,7 @@ static void *psp_init(const video_info_t *video,
    else
    {
       u16 i;
+      video_driver_state_t *video_st = video_state_get_ptr();
       uint16_t* LUT_r_local = (uint16_t*)(SCEGU_VRAM_BP_2);
       uint16_t* LUT_b_local = (uint16_t*)(SCEGU_VRAM_BP_2) + (1 << 5);
 
@@ -368,8 +442,8 @@ static void *psp_init(const video_info_t *video,
       psp->bpp_log2         = 1;
 
       pixel_format          =
-         (video_driver_get_pixel_format() == RETRO_PIXEL_FORMAT_0RGB1555)
-         ? GU_PSM_5551 : GU_PSM_5650 ;
+         (video_st->pix_fmt == RETRO_PIXEL_FORMAT_0RGB1555)
+         ? GU_PSM_5551 : GU_PSM_5650;
 
       lut_pixel_format      = GU_PSM_T16;
 
@@ -455,7 +529,8 @@ static void *psp_init(const video_info_t *video,
    if (input && input_data)
    {
       settings_t *settings = config_get_ptr();
-      pspinput             = input_psp.init(settings->arrays.input_joypad_driver);
+      pspinput             = input_driver_init_wrap(&input_psp,
+            settings->arrays.input_joypad_driver);
       *input               = pspinput ? &input_psp : NULL;
       *input_data          = pspinput;
    }
@@ -471,21 +546,14 @@ static void *psp_init(const video_info_t *video,
    return psp;
 }
 
-#if 0
-#define DISPLAY_FPS
-#endif
-
 static bool psp_frame(void *data, const void *frame,
       unsigned width, unsigned height, uint64_t frame_count,
       unsigned pitch, const char *msg, video_frame_info_t *video_info)
 {
-#ifdef DISPLAY_FPS
-   uint32_t diff;
-   static uint64_t currentTick,lastTick;
-   static int frames;
-   static float fps                        = 0.0;
+   psp1_video_t *psp  = (psp1_video_t*)data;
+#ifdef HAVE_MENU
+   bool menu_is_alive = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
 #endif
-   psp1_video_t *psp                       = (psp1_video_t*)data;
 
    if (!width || !height)
       return false;
@@ -498,39 +566,17 @@ static bool psp_frame(void *data, const void *frame,
    if (!psp->hw_render)
       sceGuSync(0, 0); /* let the core decide when to sync when HW_RENDER */
 
-   pspDebugScreenSetBase(psp->draw_buffer);
-
-   pspDebugScreenSetXY(0,0);
-
-   if (video_info->fps_show)
+   if (msg)
    {
-      pspDebugScreenSetXY(68 - strlen(video_info->fps_text) - 1,0);
-      pspDebugScreenPuts(video_info->fps_text);
-      pspDebugScreenSetXY(0,1);
+      pspDebugScreenSetBase(psp->draw_buffer);
+      pspDebugScreenSetXY(0,0);
+      pspDebugScreenPuts(msg);
    }
 
-   if (msg)
-      pspDebugScreenPuts(msg);
-
-   if ((psp->vsync)&&(psp->vblank_not_reached))
+   if ((psp->vsync) && (psp->vblank_not_reached))
       sceDisplayWaitVblankStart();
 
    psp->vblank_not_reached = true;
-
-#ifdef DISPLAY_FPS
-   frames++;
-   sceRtcGetCurrentTick(&currentTick);
-   diff = currentTick - lastTick;
-   if(diff > 1000000)
-   {
-      fps = (float)frames * 1000000.0 / diff;
-      lastTick = currentTick;
-      frames = 0;
-   }
-
-   pspDebugScreenSetXY(0,0);
-   pspDebugScreenPrintf("%f", fps);
-#endif
 
    psp->draw_buffer = FROM_GU_POINTER(sceGuSwapBuffers());
 
@@ -555,7 +601,8 @@ static bool psp_frame(void *data, const void *frame,
       if (frame)
       {
          sceKernelDcacheWritebackRange(frame,pitch * height);
-         sceGuCopyImage(psp->rgb32? GU_PSM_8888 : GU_PSM_5650, ((u32)frame & 0xF) >> psp->bpp_log2,
+         sceGuCopyImage(psp->rgb32? GU_PSM_8888 : GU_PSM_5650,
+               ((u32)frame & 0xF) >> psp->bpp_log2,
                0, width, height, pitch >> psp->bpp_log2,
                (void*)((u32)frame & ~0xF), 0, 0, width, psp->texture);
       }
@@ -566,10 +613,10 @@ static bool psp_frame(void *data, const void *frame,
    sceGuFinish();
 
 #ifdef HAVE_MENU
-   menu_driver_frame(video_info);
+   menu_driver_frame(menu_is_alive, video_info);
 #endif
 
-   if(psp->menu.active)
+   if (psp->menu.active)
    {
       sceGuSendList(GU_TAIL, psp->menu.dList, &(psp->menu.context_storage));
       sceGuSync(0, 0);
@@ -578,7 +625,8 @@ static bool psp_frame(void *data, const void *frame,
    return true;
 }
 
-static void psp_set_nonblock_state(void *data, bool toggle)
+static void psp_set_nonblock_state(void *data, bool toggle,
+      bool adaptive_vsync_enabled, unsigned swap_interval)
 {
    psp1_video_t *psp = (psp1_video_t*)data;
 
@@ -586,30 +634,15 @@ static void psp_set_nonblock_state(void *data, bool toggle)
       psp->vsync = !toggle;
 }
 
-static bool psp_alive(void *data)
-{
-   (void)data;
-   return true;
-}
-
-static bool psp_focus(void *data)
-{
-   (void)data;
-   return true;
-}
-
-static bool psp_suppress_screensaver(void *data, bool enable)
-{
-   (void)data;
-   (void)enable;
-   return false;
-}
+static bool psp_alive(void *data) { return true; }
+static bool psp_focus(void *data) { return true; }
+static bool psp_suppress_screensaver(void *data, bool enable) { return false; }
 
 static void psp_free(void *data)
 {
    psp1_video_t *psp = (psp1_video_t*)data;
 
-   if(!(psp) || !(psp->main_dList))
+   if (!(psp) || !(psp->main_dList))
       return;
 
    sceDisplayWaitVblankStart();
@@ -639,14 +672,6 @@ static void psp_set_texture_frame(void *data, const void *frame, bool rgb32,
                                unsigned width, unsigned height, float alpha)
 {
    psp1_video_t *psp = (psp1_video_t*)data;
-
-   (void) rgb32;
-   (void) alpha;
-
-#ifdef DEBUG
-   /* psp->menu.frame buffer size is (480 * 272)*2 Bytes */
-   retro_assert((width*height) < (480 * 272));
-#endif
 
    psp_set_screen_coords(psp->menu.frame_coords, 0, 0,
          SCEGU_SCR_WIDTH, SCEGU_SCR_HEIGHT, 0);
@@ -689,96 +714,17 @@ static void psp_set_texture_enable(void *data, bool state, bool full_screen)
       psp->menu.active = state;
 }
 
-static void psp_update_viewport(psp1_video_t* psp,
-      video_frame_info_t *video_info)
-{
-   int x                = 0;
-   int y                = 0;
-   float device_aspect  = ((float)SCEGU_SCR_WIDTH) / SCEGU_SCR_HEIGHT;
-   float width          = SCEGU_SCR_WIDTH;
-   float height         = SCEGU_SCR_HEIGHT;
-   settings_t *settings = config_get_ptr();
-
-   if (settings->bools.video_scale_integer)
-   {
-      video_viewport_get_scaled_integer(&psp->vp, SCEGU_SCR_WIDTH,
-            SCEGU_SCR_HEIGHT, video_driver_get_aspect_ratio(), psp->keep_aspect);
-      width  = psp->vp.width;
-      height = psp->vp.height;
-   }
-   else if (psp->keep_aspect)
-   {
-#if defined(HAVE_MENU)
-      if (settings->uints.video_aspect_ratio_idx == ASPECT_RATIO_CUSTOM)
-      {
-         x      = video_info->custom_vp_x;
-         y      = video_info->custom_vp_y;
-         width  = video_info->custom_vp_width;
-         height = video_info->custom_vp_height;
-      }
-      else
-#endif
-      {
-         float delta;
-         float desired_aspect = video_driver_get_aspect_ratio();
-
-         if ((fabsf(device_aspect - desired_aspect) < 0.0001f)
-               || (fabsf((16.0/9.0) - desired_aspect) < 0.02f))
-         {
-            /* If the aspect ratios of screen and desired aspect
-             * ratio are sufficiently equal (floating point stuff),
-             * assume they are actually equal.
-             */
-         }
-         else if (device_aspect > desired_aspect)
-         {
-            delta = (desired_aspect / device_aspect - 1.0f)
-               / 2.0f + 0.5f;
-            x     = (int)roundf(width * (0.5f - delta));
-            width = (unsigned)roundf(2.0f * width * delta);
-         }
-         else
-         {
-            delta  = (device_aspect / desired_aspect - 1.0f)
-               / 2.0f + 0.5f;
-            y      = (int)roundf(height * (0.5f - delta));
-            height = (unsigned)roundf(2.0f * height * delta);
-         }
-      }
-
-      psp->vp.x      = x;
-      psp->vp.y      = y;
-      psp->vp.width  = width;
-      psp->vp.height = height;
-   }
-   else
-   {
-      psp->vp.x = psp->vp.y = 0;
-      psp->vp.width = width;
-      psp->vp.height = height;
-   }
-
-   psp->vp.width += psp->vp.width&0x1;
-   psp->vp.height += psp->vp.height&0x1;
-
-   psp_set_screen_coords(psp->frame_coords, psp->vp.x,
-         psp->vp.y, psp->vp.width, psp->vp.height, psp->rotation);
-
-   psp->should_resize = false;
-
-}
-
 static void psp_set_rotation(void *data, unsigned rotation)
 {
-   psp1_video_t *psp = (psp1_video_t*)data;
+   psp1_video_t *psp  = (psp1_video_t*)data;
 
    if (!psp)
       return;
 
-   psp->rotation = rotation;
+   psp->rotation      = rotation;
    psp->should_resize = true;
 }
-static void psp_set_filtering(void *data, unsigned index, bool smooth)
+static void psp_set_filtering(void *data, unsigned index, bool smooth, bool ctx_scaling)
 {
    psp1_video_t *psp = (psp1_video_t*)data;
 
@@ -824,9 +770,9 @@ static uint32_t psp_get_flags(void *data)
 
 static const video_poke_interface_t psp_poke_interface = {
    psp_get_flags,
-   NULL,
-   NULL,
-   NULL,
+   NULL, /* load_texture */
+   NULL, /* unload_texture */
+   NULL, /* set_video_mode */
    NULL, /* get_refresh_rate */
    psp_set_filtering,
    NULL, /* get_video_output_size */
@@ -838,12 +784,16 @@ static const video_poke_interface_t psp_poke_interface = {
    psp_apply_state_changes,
    psp_set_texture_frame,
    psp_set_texture_enable,
-   NULL,                        /* set_osd_msg */
-   NULL,                        /* show_mouse  */
-   NULL,                        /* grab_mouse_toggle */
-   NULL,                        /* get_current_shader */
-   NULL,                        /* get_current_software_framebuffer */
-   NULL                         /* get_hw_render_interface */
+   NULL, /* set_osd_msg */
+   NULL, /* show_mouse  */
+   NULL, /* grab_mouse_toggle */
+   NULL, /* get_current_shader */
+   NULL, /* get_current_software_framebuffer */
+   NULL, /* get_hw_render_interface */
+   NULL, /* set_hdr_max_nits */
+   NULL, /* set_hdr_paper_white_nits */
+   NULL, /* set_hdr_contrast */
+   NULL  /* set_hdr_expand_gamut */
 };
 
 static void psp_get_poke_interface(void *data,
@@ -857,11 +807,8 @@ static bool psp_read_viewport(void *data, uint8_t *buffer, bool is_idle)
 {
    void* src_buffer;
    int i, j, src_bufferwidth, src_pixelformat, src_x, src_y, src_x_max, src_y_max;
-   uint8_t* dst = buffer;
+   uint8_t      *dst = buffer;
    psp1_video_t *psp = (psp1_video_t*)data;
-
-   (void)data;
-   (void)buffer;
 
    sceDisplayGetFrameBuf(&src_buffer, &src_bufferwidth, &src_pixelformat, PSP_DISPLAY_SETBUF_NEXTFRAME);
 
@@ -873,7 +820,7 @@ static bool psp_read_viewport(void *data, uint8_t *buffer, bool is_idle)
    switch(src_pixelformat)
    {
    case PSP_DISPLAY_PIXEL_FORMAT_565:
-      for (j = (src_y_max - 1); j >= src_y ; j--)
+      for (j = (src_y_max - 1); j >= src_y; j--)
       {
          uint16_t* src = (uint16_t*)src_buffer + src_bufferwidth * j + src_x;
          for (i = src_x; i < src_x_max; i++)
@@ -888,7 +835,7 @@ static bool psp_read_viewport(void *data, uint8_t *buffer, bool is_idle)
       return true;
 
    case PSP_DISPLAY_PIXEL_FORMAT_5551:
-      for (j = (src_y_max - 1); j >= src_y ; j--)
+      for (j = (src_y_max - 1); j >= src_y; j--)
       {
          uint16_t* src = (uint16_t*)src_buffer + src_bufferwidth * j + src_x;
          for (i = src_x; i < src_x_max; i++)
@@ -903,7 +850,7 @@ static bool psp_read_viewport(void *data, uint8_t *buffer, bool is_idle)
       return true;
 
    case PSP_DISPLAY_PIXEL_FORMAT_4444:
-      for (j = (src_y_max - 1); j >= src_y ; j--)
+      for (j = (src_y_max - 1); j >= src_y; j--)
       {
          uint16_t* src = (uint16_t*)src_buffer + src_bufferwidth * j + src_x;
          for (i = src_x; i < src_x_max; i++)
@@ -918,7 +865,7 @@ static bool psp_read_viewport(void *data, uint8_t *buffer, bool is_idle)
       return true;
 
    case PSP_DISPLAY_PIXEL_FORMAT_8888:
-      for (j = (src_y_max - 1); j >= src_y ; j--)
+      for (j = (src_y_max - 1); j >= src_y; j--)
       {
          uint32_t* src = (uint32_t*)src_buffer + src_bufferwidth * j + src_x;
          for (i = src_x; i < src_x_max; i++)
@@ -936,15 +883,7 @@ static bool psp_read_viewport(void *data, uint8_t *buffer, bool is_idle)
    return false;
 }
 
-static bool psp_set_shader(void *data,
-      enum rarch_shader_type type, const char *path)
-{
-   (void)data;
-   (void)type;
-   (void)path;
-
-   return false;
-}
+static bool psp_set_shader(void *data, enum rarch_shader_type type, const char *path) { return false; }
 
 video_driver_t video_psp1 = {
    psp_init,
@@ -963,10 +902,11 @@ video_driver_t video_psp1 = {
    psp_read_viewport,
    NULL, /* read_frame_raw */
 #ifdef HAVE_OVERLAY
-   NULL,
+   NULL, /* get_overlay_interface */
 #endif
-#ifdef HAVE_VIDEO_LAYOUT
-  NULL,
+   psp_get_poke_interface,
+   NULL, /* wrap_type_to_enum */
+#ifdef HAVE_GFX_WIDGETS
+   NULL  /* gfx_widgets_enabled */
 #endif
-   psp_get_poke_interface
 };

@@ -15,8 +15,12 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <retro_miscellaneous.h>
 #include <stdlib.h>
+
+#include <retro_miscellaneous.h>
+#include <string/stdstring.h>
+
+#include <sixel.h>
 
 #ifdef HAVE_CONFIG_H
 #include "../../config.h"
@@ -33,7 +37,7 @@
 #include "../../retroarch.h"
 #include "../../verbosity.h"
 #include "../../frontend/frontend_driver.h"
-#include "../common/sixel_common.h"
+#include "../common/sixel_defines.h"
 
 #ifndef _WIN32
 #define HAVE_SYS_IOCTL_H
@@ -57,6 +61,75 @@
 #error "Old version of libsixel detected, please upgrade to at least 1.6.0."
 #endif
 
+/*
+ * FONT DRIVER
+ */
+
+typedef struct
+{
+   const font_renderer_driver_t *font_driver;
+   void *font_data;
+   sixel_t *sixel;
+} sixel_raster_t;
+
+static void *sixel_font_init(void *data,
+      const char *font_path, float font_size,
+      bool is_threaded)
+{
+   sixel_raster_t *font  = (sixel_raster_t*)calloc(1, sizeof(*font));
+
+   if (!font)
+      return NULL;
+
+   font->sixel = (sixel_t*)data;
+
+   if (!font_renderer_create_default(
+            &font->font_driver,
+            &font->font_data, font_path, font_size))
+      return NULL;
+
+   return font;
+}
+
+static void sixel_font_free(void *data, bool is_threaded)
+{
+  sixel_raster_t *font  = (sixel_raster_t*)data;
+  if (!font)
+     return;
+
+  if (font->font_driver && font->font_data && font->font_driver->free)
+     font->font_driver->free(font->font_data);
+
+  free(font);
+}
+
+static int sixel_font_get_message_width(void *data, const char *msg,
+      size_t msg_len, float scale) { return 0; }
+static const struct font_glyph *sixel_font_get_glyph(
+      void *data, uint32_t code) { return NULL; }
+/* TODO/FIXME: add text drawing support */
+static void sixel_font_render_msg(
+      void *userdata,
+      void *data,
+      const char *msg,
+      const struct font_params *_params) { }
+
+font_renderer_t sixel_font = {
+   sixel_font_init,
+   sixel_font_free,
+   sixel_font_render_msg,
+   "sixel",
+   sixel_font_get_glyph,
+   NULL,                       /* bind_block */
+   NULL,                       /* flush */
+   sixel_font_get_message_width,
+   NULL                        /* get_line_metrics */
+};
+
+/*
+ * VIDEO DRIVER
+ */
+
 static unsigned char *sixel_menu_frame = NULL;
 static unsigned sixel_menu_width       = 0;
 static unsigned sixel_menu_height      = 0;
@@ -67,8 +140,6 @@ static unsigned sixel_video_pitch      = 0;
 static unsigned sixel_video_bits       = 0;
 static unsigned sixel_menu_bits        = 0;
 static double sixel_video_scale        = 1;
-static bool sixel_rgb32                = false;
-static bool sixel_menu_rgb32           = false;
 static unsigned *sixel_temp_buf        = NULL;
 
 static int sixel_write(char *data, int size, void *priv)
@@ -79,24 +150,24 @@ static int sixel_write(char *data, int size, void *priv)
 static SIXELSTATUS output_sixel(unsigned char *pixbuf, int width, int height,
       int ncolors, int pixelformat)
 {
-   sixel_output_t *context;
-   sixel_dither_t *dither;
-   SIXELSTATUS status;
-
-   context = sixel_output_create(sixel_write, stdout);
-   dither = sixel_dither_create(ncolors);
-   status = sixel_dither_initialize(dither, pixbuf,
+   sixel_output_t *context = sixel_output_create(sixel_write, stdout);
+   sixel_dither_t *dither  = sixel_dither_create(ncolors);
+   SIXELSTATUS      status = sixel_dither_initialize(dither, pixbuf,
          width, height,
          pixelformat,
          SIXEL_LARGE_AUTO,
          SIXEL_REP_AUTO,
          SIXEL_QUALITY_AUTO);
+
    if (SIXEL_FAILED(status))
       return status;
+
    status = sixel_encode(pixbuf, width, height,
          pixelformat, dither, context);
+
    if (SIXEL_FAILED(status))
       return status;
+
    sixel_output_unref(context);
    sixel_dither_unref(dither);
 
@@ -104,7 +175,7 @@ static SIXELSTATUS output_sixel(unsigned char *pixbuf, int width, int height,
 }
 
 #ifdef HAVE_SYS_IOCTL_H
-# ifdef HAVE_TERMIOS_H
+#ifdef HAVE_TERMIOS_H
 static int wait_stdin(int usec)
 {
 #ifdef HAVE_SYS_SELECT_H
@@ -114,7 +185,7 @@ static int wait_stdin(int usec)
    int ret = 0;
 
 #ifdef HAVE_SYS_SELECT_H
-   tv.tv_sec = usec / 1000000;
+   tv.tv_sec  = usec / 1000000;
    tv.tv_usec = usec % 1000000;
    FD_ZERO(&rfds);
    FD_SET(STDIN_FILENO, &rfds);
@@ -125,7 +196,7 @@ static int wait_stdin(int usec)
 
    return ret;
 }
-# endif
+#endif
 #endif
 
 static void scroll_on_demand(int pixelheight)
@@ -149,7 +220,7 @@ static void scroll_on_demand(int pixelheight)
       printf("\033[H\0337");
       return;
    }
-# ifdef HAVE_TERMIOS_H
+#ifdef HAVE_TERMIOS_H
    /* set the terminal to cbreak mode */
    tcgetattr(STDIN_FILENO, &old_termios);
    memcpy(&new_termios, &old_termios, sizeof(old_termios));
@@ -178,9 +249,9 @@ static void scroll_on_demand(int pixelheight)
    }
 
    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_termios);
-# else
+#else
    printf("\033[H\0337");
-# endif  /* HAVE_TERMIOS_H */
+#endif  /* HAVE_TERMIOS_H */
 #else
    printf("\033[H\0337");
 #endif  /* HAVE_SYS_IOCTL_H */
@@ -189,17 +260,18 @@ static void scroll_on_demand(int pixelheight)
 static void *sixel_gfx_init(const video_info_t *video,
       input_driver_t **input, void **input_data)
 {
-   gfx_ctx_input_t inp;
    void *ctx_data                       = NULL;
-   settings_t *settings                 = config_get_ptr();
-   sixel_t *sixel                       = (sixel_t*)calloc(1, sizeof(*sixel));
-   const gfx_ctx_driver_t *ctx_driver   = NULL;
    const char *scale_str                = NULL;
+   settings_t *settings                 = config_get_ptr();
+   bool video_font_enable               = settings->bools.video_font_enable;
+   sixel_t *sixel                       = (sixel_t*)calloc(1, sizeof(*sixel));
+
+   if (!sixel)
+      return NULL;
 
    *input                               = NULL;
    *input_data                          = NULL;
 
-   sixel_rgb32                          = video->rgb32;
    sixel_video_bits                     = video->rgb32 ? 32 : 16;
 
    if (video->rgb32)
@@ -218,40 +290,27 @@ static void *sixel_gfx_init(const video_info_t *video,
          sixel_video_scale = 1.0;
    }
 
-   ctx_driver = video_context_driver_init_first(sixel,
-         settings->arrays.video_context_driver,
-         GFX_CTX_SIXEL_API, 1, 0, false, &ctx_data);
+#ifdef HAVE_UDEV
+   *input_data    = input_driver_init_wrap(&input_udev,
+         settings->arrays.input_driver);
 
-   if (!ctx_driver)
-      goto error;
+   if (*input_data)
+      *input      = &input_udev;
+   else
+#endif
+   {
+      *input      = NULL;
+      *input_data = NULL;
+   }
 
-   if (ctx_data)
-      sixel->ctx_data = ctx_data;
-
-   sixel->ctx_driver = ctx_driver;
-   video_context_driver_set((const gfx_ctx_driver_t*)ctx_driver);
-
-   RARCH_LOG("[SIXEL]: Found SIXEL context: %s\n", ctx_driver->ident);
-
-   inp.input      = input;
-   inp.input_data = input_data;
-
-   video_context_driver_input_driver(&inp);
-
-   if (settings->bools.video_font_enable)
-      font_driver_init_osd(sixel, false,
+   if (video_font_enable)
+      font_driver_init_osd(sixel,
+            video,
+            false,
             video->is_threaded,
             FONT_DRIVER_RENDER_SIXEL);
 
-   RARCH_LOG("[SIXEL]: Init complete.\n");
-
    return sixel;
-
-error:
-   video_context_driver_destroy();
-   if (sixel)
-      free(sixel);
-   return NULL;
 }
 
 static bool sixel_gfx_frame(void *data, const void *frame,
@@ -266,12 +325,15 @@ static bool sixel_gfx_frame(void *data, const void *frame,
    unsigned pixfmt           = SIXEL_PIXELFORMAT_RGB565;
    bool draw                 = true;
    sixel_t *sixel            = (sixel_t*)data;
+#ifdef HAVE_MENU
+   bool menu_is_alive        = (video_info->menu_st_flags & MENU_ST_FLAG_ALIVE) ? true : false;
+#endif
 
    if (!frame || !frame_width || !frame_height)
       return true;
 
 #ifdef HAVE_MENU
-   menu_driver_frame(video_info);
+   menu_driver_frame(menu_is_alive, video_info);
 #endif
 
    if (sixel_video_width != frame_width || sixel_video_height != frame_height || sixel_video_pitch != pitch)
@@ -286,7 +348,8 @@ static bool sixel_gfx_frame(void *data, const void *frame,
       }
    }
 
-   if (sixel_menu_frame && video_info->menu_is_alive)
+#ifdef HAVE_MENU
+   if (sixel_menu_frame && menu_is_alive)
    {
       frame_to_copy = sixel_menu_frame;
       width         = sixel_menu_width;
@@ -295,6 +358,7 @@ static bool sixel_gfx_frame(void *data, const void *frame,
       bits          = sixel_menu_bits;
    }
    else
+#endif
    {
       width         = sixel_video_width;
       height        = sixel_video_height;
@@ -303,8 +367,10 @@ static bool sixel_gfx_frame(void *data, const void *frame,
       if (frame_width == 4 && frame_height == 4 && (frame_width < width && frame_height < height))
          draw = false;
 
-      if (video_info->menu_is_alive)
+#ifdef HAVE_MENU
+      if (menu_is_alive)
          draw = false;
+#endif
    }
 
    if (sixel->video_width != width || sixel->video_height != height)
@@ -415,64 +481,39 @@ static bool sixel_gfx_frame(void *data, const void *frame,
 
       if (SIXEL_FAILED(sixel->sixel_status))
       {
-         fprintf(stderr, "%s\n%s\n",
+         RARCH_ERR("%s\n%s\n",
                sixel_helper_format_error(sixel->sixel_status),
                sixel_helper_get_additional_message());
       }
    }
 
    if (msg)
-      font_driver_render_msg(video_info, NULL, msg, NULL);
+      font_driver_render_msg(sixel, msg, NULL, NULL);
 
    return true;
 }
 
-static void sixel_gfx_set_nonblock_state(void *data, bool toggle)
-{
-   (void)data;
-   (void)toggle;
-}
-
 static bool sixel_gfx_alive(void *data)
 {
-   gfx_ctx_size_t size_data;
    unsigned temp_width  = 0;
    unsigned temp_height = 0;
    bool quit            = false;
    bool resize          = false;
-   bool is_shutdown     = rarch_ctl(RARCH_CTL_IS_SHUTDOWN, NULL);
    sixel_t *sixel       = (sixel_t*)data;
 
    /* Needed because some context drivers don't track their sizes */
    video_driver_get_size(&temp_width, &temp_height);
 
-   sixel->ctx_driver->check_window(sixel->ctx_data,
-            &quit, &resize, &temp_width, &temp_height, is_shutdown);
-
    if (temp_width != 0 && temp_height != 0)
-      video_driver_set_size(&temp_width, &temp_height);
+      video_driver_set_size(temp_width, temp_height);
 
    return true;
 }
 
-static bool sixel_gfx_focus(void *data)
-{
-   (void)data;
-   return true;
-}
-
-static bool sixel_gfx_suppress_screensaver(void *data, bool enable)
-{
-   (void)data;
-   (void)enable;
-   return false;
-}
-
-static bool sixel_gfx_has_windowed(void *data)
-{
-   (void)data;
-   return true;
-}
+static void sixel_gfx_set_nonblock_state(void *a, bool b, bool c, unsigned d) { }
+static bool sixel_gfx_focus(void *data) { return true; }
+static bool sixel_gfx_suppress_screensaver(void *data, bool enable) { return false; }
+static bool sixel_gfx_has_windowed(void *data) { return true; }
 
 static void sixel_gfx_free(void *data)
 {
@@ -544,74 +585,46 @@ static void sixel_set_texture_frame(void *data,
    }
 }
 
-static void sixel_set_osd_msg(void *data,
-      video_frame_info_t *video_info,
-      const char *msg,
-      const void *params, void *font)
-{
-   font_driver_render_msg(video_info, font, msg, (const struct font_params*)params);
-}
-
 static void sixel_get_video_output_size(void *data,
-      unsigned *width, unsigned *height)
-{
-   gfx_ctx_size_t size_data;
-   size_data.width  = width;
-   size_data.height = height;
-   video_context_driver_get_video_output_size(&size_data);
-}
-
-static void sixel_get_video_output_prev(void *data)
-{
-   video_context_driver_get_video_output_prev();
-}
-
-static void sixel_get_video_output_next(void *data)
-{
-   video_context_driver_get_video_output_next();
-}
-
+      unsigned *width, unsigned *height, char *desc, size_t desc_len) { }
+static void sixel_get_video_output_prev(void *data) { }
+static void sixel_get_video_output_next(void *data) { }
 static void sixel_set_video_mode(void *data, unsigned width, unsigned height,
-      bool fullscreen)
-{
-   gfx_ctx_mode_t mode;
-
-   mode.width      = width;
-   mode.height     = height;
-   mode.fullscreen = fullscreen;
-
-   video_context_driver_set_video_mode(&mode);
-}
+      bool fullscreen) { }
 
 static const video_poke_interface_t sixel_poke_interface = {
-   NULL,
-   NULL,
-   NULL,
+   NULL, /* get_flags */
+   NULL, /* load_texture */
+   NULL, /* unload_texture */
    sixel_set_video_mode,
-   NULL,
-   NULL,
+   NULL, /* get_refresh_rate */
+   NULL, /* set_filtering */
    sixel_get_video_output_size,
    sixel_get_video_output_prev,
    sixel_get_video_output_next,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-#if defined(HAVE_MENU)
+   NULL, /* get_current_framebuffer */
+   NULL, /* get_proc_address */
+   NULL, /* set_aspect_ratio */
+   NULL, /* apply_state_changes */
+#ifdef HAVE_MENU
    sixel_set_texture_frame,
-   NULL,
-   sixel_set_osd_msg,
-   NULL,
+   NULL, /* set_texture_enable */
+   font_driver_render_msg,
+   NULL, /* show_mouse */
 #else
-   NULL,
-   NULL,
-   NULL,
-   NULL,
+   NULL, /* set_texture_frame */
+   NULL, /* set_texture_enable */
+   NULL, /* set_osd_msg */
+   NULL, /* show_mouse */
 #endif
-   NULL,
-   NULL,
-   NULL,
-   NULL,
+   NULL, /* grab_mouse_toggle */
+   NULL, /* get_current_shader */
+   NULL, /* get_current_software_framebuffer */
+   NULL, /* get_hw_render_interface */
+   NULL, /* set_hdr_max_nits */
+   NULL, /* set_hdr_paper_white_nits */
+   NULL, /* set_hdr_contrast */
+   NULL  /* set_hdr_expand_gamut */
 };
 
 static void sixel_gfx_get_poke_interface(void *data,
@@ -648,11 +661,11 @@ video_driver_t video_sixel = {
    NULL, /* read_viewport */
    NULL, /* read_frame_raw */
 #ifdef HAVE_OVERLAY
-   NULL, /* overlay_interface */
-#endif
-#ifdef HAVE_VIDEO_LAYOUT
-  NULL,
+   NULL, /* get_overlay_interface */
 #endif
    sixel_gfx_get_poke_interface,
-   NULL /* wrap_type_to_enum */
+   NULL, /* wrap_type_to_enum */
+#ifdef HAVE_GFX_WIDGETS
+   NULL  /* gfx_widgets_enabled */
+#endif
 };

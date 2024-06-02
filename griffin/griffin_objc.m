@@ -23,38 +23,36 @@
 #define __IPHONE_OS_VERSION_MAX_ALLOWED 00000
 #endif
 
-#if defined(__APPLE__) && defined(__MACH__)
-#include "../frontend/drivers/platform_darwin.m"
+#if defined(HAVE_ZLIB) || defined(HAVE_7ZIP)
+#define HAVE_COMPRESSION 1
 #endif
 
 #if defined(HAVE_COCOATOUCH) || defined(HAVE_COCOA) || defined(HAVE_COCOA_METAL)
 
 #include "../ui/drivers/cocoa/cocoa_common.m"
+#if defined(HAVE_OPENGL) || defined(HAVE_OPENGLES)
 #include "../gfx/drivers_context/cocoa_gl_ctx.m"
-
-#if defined(HAVE_COCOATOUCH)
-
-#if TARGET_OS_IOS
-#include "../ui/drivers/cocoa/cocoatouch_menu.m"
 #endif
-#include "../ui/drivers/ui_cocoatouch.m"
+#if defined(HAVE_VULKAN)
+#include "../gfx/drivers_context/cocoa_vk_ctx.m"
+#endif
 
-#else
-
-#if defined(HAVE_COCOA) || defined(HAVE_COCOA_METAL)
-#include "../ui/drivers/cocoa/ui_cocoa_window.m"
-#include "../ui/drivers/cocoa/ui_cocoa_browser_window.m"
-#include "../ui/drivers/cocoa/ui_cocoa_application.m"
-#include "../ui/drivers/cocoa/ui_cocoa_msg_window.m"
+#if defined(OSX)
 #include "../ui/drivers/ui_cocoa.m"
+#else
+#include "../ui/drivers/ui_cocoatouch.m"
 #endif
 
-#endif
+#include "../input/drivers/cocoa_input.m"
 
 #endif
 
 #ifdef HAVE_MFI
 #include "../input/drivers_joypad/mfi_joypad.m"
+#endif
+
+#if defined(__APPLE__) && defined(__MACH__)
+#include "../frontend/drivers/platform_darwin.m"
 #endif
 
 #ifdef HAVE_COREAUDIO3
@@ -66,14 +64,10 @@
 #endif
 
 #ifdef HAVE_METAL
-#import "../gfx/common/metal/Context.m"
-#import "../gfx/common/metal/Filter.m"
-#import "../gfx/common/metal/RendererCommon.m"
-#import "../gfx/common/metal/View.m"
-#import "../gfx/common/metal/TexturedView.m"
-#import "../gfx/common/metal/MenuDisplay.m"
-#import "../gfx/common/metal_common.m"
+#import "../gfx/common/metal/metal_renderer.m"
 #import "../gfx/drivers/metal.m"
-#import "../menu/drivers_display/menu_display_metal.m"
-#import "../gfx/drivers_font/metal_raster_font.m"
+#endif
+
+#if defined(HAVE_NETWORKING) && defined(HAVE_NETPLAYDISCOVERY) && defined(HAVE_NETPLAYDISCOVERY_NSNET)
+#import "../network/netplay/netplay_nsnetservice.m"
 #endif

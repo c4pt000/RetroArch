@@ -812,6 +812,7 @@ enum
 #endif /* __STB_INCLUDE_STB_TRUETYPE_H__ */
 
 #include <retro_assert.h>
+#include <retro_endianness.h>
 
 /* IMPLEMENTATION */
 
@@ -1984,11 +1985,8 @@ static void stbtt__fill_active_edges_new(float *scanline, float *scanline_fill,
                    t = x_bottom;
                    x_bottom = x_top;
                    x_top = t;
-                  dx = -dx;
                   dy = -dy;
-                   t = x0;
                    x0 = xb;
-                   xb = t;
                }
 
                x1 = (int) x_top;

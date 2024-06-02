@@ -21,7 +21,8 @@
 #include <switch.h>
 
 #include <queues/fifo_queue.h>
-#include "../../retroarch.h"
+
+#include "../audio_driver.h"
 #include "../../verbosity.h"
 #include "../../tasks/tasks_internal.h"
 
@@ -43,13 +44,14 @@ static const AudioRendererConfig audio_renderer_config =
    .num_mix_buffers = 2,
 };
 
-typedef struct {
+typedef struct
+{
    AudioDriver drv;
    void* mempool;
    AudioDriverWaveBuf wavebufs[BUFFER_COUNT];
    size_t buffer_size;
    size_t samples;
-   bool nonblocking;
+   bool nonblock;
 
    fifo_buffer_t* fifo;
    Mutex fifo_lock;
@@ -63,21 +65,21 @@ typedef struct {
 
 static void thread_job(void* data)
 {
-   libnx_audren_thread_t *aud = (libnx_audren_thread_t*)data;
-   size_t available = 0;
-   size_t current_size = 0;
-   size_t written_tmp = 0;
-   AudioDriverWaveBuf* current_wavebuf = NULL;
-   void* current_pool_ptr = NULL;
-   void* dstbuf = NULL;
    unsigned i;
+   libnx_audren_thread_t *aud          = (libnx_audren_thread_t*)data;
+   size_t available                    = 0;
+   size_t current_size                 = 0;
+   size_t written_tmp                  = 0;
+   AudioDriverWaveBuf* current_wavebuf = NULL;
+   void* current_pool_ptr              = NULL;
+   void* dstbuf                        = NULL;
 
    if (!aud)
       return;
 
-   while(aud->running)
+   while (aud->running)
    {
-      if(!current_wavebuf)
+      if (!current_wavebuf)
       {
          for (i = 0; i < BUFFER_COUNT; i++)
          {
@@ -92,19 +94,17 @@ static void thread_job(void* data)
          }
       }
 
-      if(current_wavebuf)
+      if (current_wavebuf)
       {
          mutexLock(&aud->fifo_lock);
-         available = aud->paused ? 0 : fifo_read_avail(aud->fifo);
+         available = aud->paused ? 0 : FIFO_READ_AVAIL(aud->fifo);
          written_tmp = MIN(available, aud->buffer_size - current_size);
          dstbuf = current_pool_ptr + current_size;
-         if(written_tmp > 0)
-         {
+         if (written_tmp > 0)
             fifo_read(aud->fifo, dstbuf, written_tmp);
-         }
          mutexUnlock(&aud->fifo_lock);
 
-         if(written_tmp > 0)
+         if (written_tmp > 0)
          {
             condvarWakeAll(&aud->fifo_condvar);
 
@@ -112,7 +112,7 @@ static void thread_job(void* data)
             armDCacheFlush(dstbuf, written_tmp);
          }
 
-         if(current_size == aud->buffer_size)
+         if (current_size == aud->buffer_size)
          {
             audrvVoiceAddWaveBuf(&aud->drv, 0, current_wavebuf);
 
@@ -145,7 +145,7 @@ static void *libnx_audren_thread_audio_init(const char *device, unsigned rate, u
    int mpid;
    size_t mempool_size;
    unsigned real_latency;
-   uint32_t thread_priority;
+   int32_t thread_priority;
 
    RARCH_LOG("[Audio]: Using libnx_audren_thread driver\n");
 
@@ -157,17 +157,19 @@ static void *libnx_audren_thread_audio_init(const char *device, unsigned rate, u
       goto fail;
    }
 
-   real_latency = MAX(latency, 5);
+   real_latency     = MAX(latency, 5);
    RARCH_LOG("[Audio]: real_latency is %u\n", real_latency);
 
-   aud->running = true;
-   aud->paused = false;
-   aud->nonblocking = !block_frames;
+   aud->running     = true;
+   aud->paused      = false;
+   aud->nonblock    = !block_frames;
    aud->buffer_size = (real_latency * sample_rate / 1000);
-   aud->samples = (aud->buffer_size / num_channels / sizeof(int16_t));
+   aud->samples     = (aud->buffer_size / num_channels / sizeof(int16_t));
 
-   mempool_size = (aud->buffer_size * BUFFER_COUNT + (AUDREN_MEMPOOL_ALIGNMENT-1)) &~ (AUDREN_MEMPOOL_ALIGNMENT-1);
-   aud->mempool = memalign(AUDREN_MEMPOOL_ALIGNMENT, mempool_size);
+   mempool_size     = (aud->buffer_size * BUFFER_COUNT + 
+         (AUDREN_MEMPOOL_ALIGNMENT-1)) &~ (AUDREN_MEMPOOL_ALIGNMENT-1);
+   aud->mempool     = memalign(AUDREN_MEMPOOL_ALIGNMENT, mempool_size);
+
    if (!aud->mempool)
    {
       RARCH_ERR("[Audio]: mempool alloc failed\n");
@@ -175,43 +177,44 @@ static void *libnx_audren_thread_audio_init(const char *device, unsigned rate, u
    }
 
    rc = audrenInitialize(&audio_renderer_config);
-   if(R_FAILED(rc))
+   if (R_FAILED(rc))
    {
       RARCH_ERR("[Audio]: audrenInitialize: %x\n", rc);
       goto fail;
    }
 
    rc = audrvCreate(&aud->drv, &audio_renderer_config, num_channels);
-   if(R_FAILED(rc))
+   if (R_FAILED(rc))
    {
       RARCH_ERR("[Audio]: audrvCreate: %x\n", rc);
       goto fail_init;
    }
 
-   for(i = 0; i < BUFFER_COUNT; i++)
+   for (i = 0; i < BUFFER_COUNT; i++)
    {
-      aud->wavebufs[i].data_raw = aud->mempool;
-      aud->wavebufs[i].size = mempool_size;
+      aud->wavebufs[i].data_raw            = aud->mempool;
+      aud->wavebufs[i].size                = mempool_size;
       aud->wavebufs[i].start_sample_offset = i * aud->samples;
-      aud->wavebufs[i].end_sample_offset = aud->wavebufs[i].start_sample_offset + aud->samples;
+      aud->wavebufs[i].end_sample_offset   = aud->wavebufs[i].start_sample_offset + aud->samples;
    }
 
    mpid = audrvMemPoolAdd(&aud->drv, aud->mempool, mempool_size);
    audrvMemPoolAttach(&aud->drv, mpid);
 
-   audrvDeviceSinkAdd(&aud->drv, AUDREN_DEFAULT_DEVICE_NAME, num_channels, sink_channels);
+   audrvDeviceSinkAdd(&aud->drv, AUDREN_DEFAULT_DEVICE_NAME,
+         num_channels, sink_channels);
 
    rc = audrenStartAudioRenderer();
-   if(R_FAILED(rc))
+   if (R_FAILED(rc))
    {
       RARCH_ERR("[Audio]: audrenStartAudioRenderer: %x\n", rc);
    }
 
    audrvVoiceInit(&aud->drv, 0, num_channels, PcmFormat_Int16, sample_rate);
    audrvVoiceSetDestinationMix(&aud->drv, 0, AUDREN_FINAL_MIX_ID);
-   for(i = 0; i < num_channels; i++)
+   for (i = 0; i < num_channels; i++)
    {
-      for(j = 0; j < num_channels; j++)
+      for (j = 0; j < num_channels; j++)
       {
          audrvVoiceSetMixFactor(&aud->drv, 0, i == j ? 1.0f : 0.0f, i, j);
       }
@@ -229,15 +232,17 @@ static void *libnx_audren_thread_audio_init(const char *device, unsigned rate, u
    mutexInit(&aud->fifo_condlock);
 
    svcGetThreadPriority(&thread_priority, CUR_THREAD_HANDLE);
-   rc = threadCreate(&aud->thread, &thread_job, (void*)aud, thread_stack_size, thread_priority - 1, thread_preferred_cpu);
-   if(R_FAILED(rc))
+   rc = threadCreate(&aud->thread, &thread_job,
+         (void*)aud, NULL, thread_stack_size,
+         thread_priority - 1, thread_preferred_cpu);
+   if (R_FAILED(rc))
    {
       RARCH_ERR("[Audio]: threadCreate: %x\n", rc);
       goto fail_drv;
    }
 
    rc = threadStart(&aud->thread);
-   if(R_FAILED(rc))
+   if (R_FAILED(rc))
    {
       RARCH_ERR("[Audio]: threadStart: %x\n", rc);
       threadClose(&aud->thread);
@@ -258,9 +263,7 @@ fail:
    if (aud)
    {
       if (aud->mempool)
-      {
          free(aud->mempool);
-      }
 
       free(aud);
    }
@@ -278,7 +281,8 @@ static size_t libnx_audren_thread_audio_buffer_size(void *data)
    return aud->buffer_size;
 }
 
-static ssize_t libnx_audren_thread_audio_write(void *data, const void *buf, size_t size)
+static ssize_t libnx_audren_thread_audio_write(void *data,
+      const void *buf, size_t size)
 {
    libnx_audren_thread_t *aud = (libnx_audren_thread_t*)data;
    size_t available, written, written_tmp;
@@ -286,18 +290,16 @@ static ssize_t libnx_audren_thread_audio_write(void *data, const void *buf, size
    if (!aud || !aud->running)
       return -1;
 
-   if(aud->paused)
+   if (aud->paused)
       return 0;
 
-   if(aud->nonblocking)
+   if (aud->nonblock)
    {
       mutexLock(&aud->fifo_lock);
-      available = fifo_write_avail(aud->fifo);
+      available = FIFO_WRITE_AVAIL(aud->fifo);
       written = MIN(available, size);
-      if(written > 0)
-      {
+      if (written > 0)
          fifo_write(aud->fifo, buf, written);
-      }
       mutexUnlock(&aud->fifo_lock);
    }
    else
@@ -306,8 +308,8 @@ static ssize_t libnx_audren_thread_audio_write(void *data, const void *buf, size
       while (written < size && aud->running)
       {
          mutexLock(&aud->fifo_lock);
-         available = fifo_write_avail(aud->fifo);
-         if(available)
+         available = FIFO_WRITE_AVAIL(aud->fifo);
+         if (available)
          {
             written_tmp = MIN(size - written, available);
             fifo_write(aud->fifo, (const char*)buf + written, written_tmp);
@@ -406,7 +408,7 @@ static size_t libnx_audren_thread_audio_write_avail(void *data)
       return 0;
 
    mutexLock(&aud->fifo_lock);
-   available = fifo_write_avail(aud->fifo);
+   available = FIFO_WRITE_AVAIL(aud->fifo);
    mutexUnlock(&aud->fifo_lock);
 
    return available;
@@ -419,7 +421,7 @@ static void libnx_audren_thread_audio_set_nonblock_state(void *data, bool state)
    if (!aud)
       return;
 
-   aud->nonblocking = state;
+   aud->nonblock = state;
 }
 
 audio_driver_t audio_switch_libnx_audren_thread = {

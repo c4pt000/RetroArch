@@ -68,22 +68,22 @@ static const memory_values_t mem_vals_540[] =
 
 static inline void memoryAddArea(int start, int end, int cur_index)
 {
-    /* Create and copy new memory area */
-    s_mem_area * mem_area = MEM_AREA_TABLE;
-    mem_area[cur_index].address = start;
-    mem_area[cur_index].size    = end - start;
-    mem_area[cur_index].next    = 0;
+   /* Create and copy new memory area */
+   s_mem_area *mem_area        = MEM_AREA_TABLE;
 
-    /* Fill pointer to this area in the previous area */
-    if (cur_index > 0)
-    {
-        mem_area[cur_index - 1].next = &mem_area[cur_index];
-    }
+   mem_area[cur_index].address = start;
+   mem_area[cur_index].size    = end - start;
+   mem_area[cur_index].next    = 0;
+
+   /* Fill pointer to this area in the previous area */
+   if (cur_index > 0)
+      mem_area[cur_index - 1].next = &mem_area[cur_index];
 }
+
 void *getApplicationEndAddr(void)
 {
    extern u32 _end[];
-   if((u32)_end >= 0x01000000)
+   if ((u32)_end >= 0x01000000)
       return APP_BASE_MEM;
    return _end;
 }
@@ -91,6 +91,7 @@ void *getApplicationEndAddr(void)
 /* Create memory areas arrays */
 static void memoryInitAreaTable(u32 args_size)
 {
+    int i = 0;
     u32 ApplicationMemoryEnd = (u32)getApplicationEndAddr() + args_size;
 
     /* This one seems to be available on every firmware and therefore its our code area but also our main RPX area behind our code */
@@ -100,7 +101,6 @@ static void memoryInitAreaTable(u32 args_size)
     const memory_values_t * mem_vals = mem_vals_540;
 
     /* Fill entries */
-    int i = 0;
     while (mem_vals[i].start_address)
     {
         memoryAddArea(mem_vals[i].start_address, mem_vals[i].end_address, i + 1);
@@ -124,8 +124,6 @@ static int HomebrewCopyMemory(u8 *address, u32 bytes, u32 args_size)
    if (*(u16 *)&address[7] != 0xCAFE)
    {
       /* assume ELF */
-      printf("loading ELF file \n");
-
       ELF_DATA_ADDR = (u32)getApplicationEndAddr() + args_size;
       if (ELF_DATA_ADDR >= 0x01000000)
          return -1;
@@ -133,8 +131,6 @@ static int HomebrewCopyMemory(u8 *address, u32 bytes, u32 args_size)
    else
    {
       /* RPX */
-      printf("loading RPX file \n");
-
       ELF_DATA_ADDR = MEM_AREA_TABLE->address;
    }
 
@@ -150,13 +146,14 @@ static int HomebrewCopyMemory(u8 *address, u32 bytes, u32 args_size)
    }
    else
    {
+      u32 done            = 0;
+      u32 mapPosition     = 0;
+
       DCFlushRange(address, bytes);
 
-      u32 done = 0;
       u32 addressPhysical = (u32)OSEffectiveToPhysical(address);
 
       s_mem_area *mem_map = MEM_AREA_TABLE;
-      u32 mapPosition = 0;
 
       while ((done < bytes) && mem_map)
       {
@@ -200,123 +197,111 @@ static int HomebrewCopyMemory(u8 *address, u32 bytes, u32 args_size)
  */
 void log_rpx(const char *filepath, unsigned char *buf, size_t len)
 {
-  unsigned int line_buffer[LINE_LEN];
-  int i, offset;
+   int i;
+   unsigned int line_buffer[LINE_LEN];
 
-  RARCH_LOG("=== BEGIN file=%s size=%d ===\n", filepath, len);
-  for(i = 0; i < len; i++)
-  {
-    offset = i % LINE_LEN;
-    line_buffer[offset] = buf[i];
+   RARCH_LOG("=== BEGIN file=%s size=%d ===\n", filepath, len);
 
-    if(offset == (LINE_LEN-1)) {
+   for (i = 0; i < len; i++)
+   {
+      int offset = i % LINE_LEN;
+      line_buffer[offset] = buf[i];
+
+      if (offset == (LINE_LEN-1))
+      {
+         RARCH_LOG("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
+               line_buffer[0], line_buffer[1], line_buffer[2], line_buffer[3],
+               line_buffer[4], line_buffer[5], line_buffer[6], line_buffer[7],
+               line_buffer[8], line_buffer[9], line_buffer[10], line_buffer[11],
+               line_buffer[12], line_buffer[13], line_buffer[14], line_buffer[15],
+               line_buffer[16], line_buffer[17], line_buffer[18], line_buffer[19],
+               line_buffer[20], line_buffer[21], line_buffer[22], line_buffer[23],
+               line_buffer[24], line_buffer[25], line_buffer[26], line_buffer[27],
+               line_buffer[28], line_buffer[29], line_buffer[30], line_buffer[31]);
+      }
+   }
+   if ((len % LINE_LEN) != 0)
+   {
+      for (i = (LINE_LEN - (len % LINE_LEN)); i < LINE_LEN; i++)
+         line_buffer[i] = 0;
+
       RARCH_LOG("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
-	line_buffer[0], line_buffer[1], line_buffer[2], line_buffer[3],
-	line_buffer[4], line_buffer[5], line_buffer[6], line_buffer[7],
-	line_buffer[8], line_buffer[9], line_buffer[10], line_buffer[11],
-	line_buffer[12], line_buffer[13], line_buffer[14], line_buffer[15],
-	line_buffer[16], line_buffer[17], line_buffer[18], line_buffer[19],
-	line_buffer[20], line_buffer[21], line_buffer[22], line_buffer[23],
-	line_buffer[24], line_buffer[25], line_buffer[26], line_buffer[27],
-	line_buffer[28], line_buffer[29], line_buffer[30], line_buffer[31]);
-    }
-  }
-  if((len % LINE_LEN) != 0) {
-    for(i = (LINE_LEN - (len % LINE_LEN)); i < LINE_LEN; i++)
-    {
-      line_buffer[i] = 0;
-    }
-    RARCH_LOG("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
-        line_buffer[0], line_buffer[1], line_buffer[2], line_buffer[3],
-	line_buffer[4], line_buffer[5], line_buffer[6], line_buffer[7],
-	line_buffer[8], line_buffer[9], line_buffer[10], line_buffer[11],
-	line_buffer[16], line_buffer[17], line_buffer[18], line_buffer[19],
-	line_buffer[20], line_buffer[21], line_buffer[22], line_buffer[23],
-	line_buffer[24], line_buffer[25], line_buffer[26], line_buffer[27],
-	line_buffer[28], line_buffer[29], line_buffer[30], line_buffer[31]);
+            line_buffer[0], line_buffer[1], line_buffer[2], line_buffer[3],
+            line_buffer[4], line_buffer[5], line_buffer[6], line_buffer[7],
+            line_buffer[8], line_buffer[9], line_buffer[10], line_buffer[11],
+            line_buffer[16], line_buffer[17], line_buffer[18], line_buffer[19],
+            line_buffer[20], line_buffer[21], line_buffer[22], line_buffer[23],
+            line_buffer[24], line_buffer[25], line_buffer[26], line_buffer[27],
+            line_buffer[28], line_buffer[29], line_buffer[30], line_buffer[31]);
 
-  }
-  RARCH_LOG("=== END %s ===\n", filepath);
-
+   }
+   RARCH_LOG("=== END %s ===\n", filepath);
 }
 
 #endif
 
-int HBL_loadToMemory(const char *filepath, u32 args_size)
+int HBL_loadToMemory(const char *file_path, u32 args_size)
 {
-   if (!filepath || !*filepath)
+   int ret;
+   FILE *fp;
+   size_t buffer_size;
+   unsigned char *buffer = NULL;
+   u32 bytes_read        = 0;
+   u32 file_size         = 0;
+   if (!file_path || !*file_path)
       return -1;
 
-   printf("Loading file %s\n", filepath);
-
-   FILE *fp = fopen(filepath, "rb");
-
-   if (!fp)
-   {
-      printf("failed to open file %s\n", filepath);
+   if (!(fp = fopen(file_path, "rb")))
       return -1;
-   }
 
-   u32 bytesRead = 0;
    fseek(fp, 0, SEEK_END);
-   u32 fileSize = ftell(fp);
+   file_size    = ftell(fp);
    fseek(fp, 0, SEEK_SET);
 
-   size_t buffer_size = (fileSize + 0x3f) & ~0x3f;
-   unsigned char *buffer = (unsigned char *) memalign(0x40, buffer_size);
+   buffer_size  = (file_size + 0x3f) & ~0x3f;
+   buffer       = (unsigned char *)memalign(0x40, buffer_size);
 
    if (!buffer)
    {
-      printf("Not enough memory\n");
+      fclose(fp);
       return -1;
    }
 
    memset(buffer, 0, buffer_size);
 
    /* Copy rpl in memory */
-   while (bytesRead < fileSize)
+   while (bytes_read < file_size)
    {
-      printf("progress: %f        \r", 100.0f * (f32)bytesRead / (f32)fileSize);
+      int ret;
+      u32 block_size = 0x8000;
 
-      u32 blockSize = 0x8000;
+      if (block_size > (file_size - bytes_read))
+         block_size = file_size - bytes_read;
 
-      if (blockSize > (fileSize - bytesRead))
-         blockSize = fileSize - bytesRead;
-
-      int ret = fread(buffer + bytesRead, 1, blockSize, fp);
-
-      if (ret <= 0)
-      {
-         printf("Failure on reading file %s\n", filepath);
+      if ((ret = fread(buffer + bytes_read, 1, block_size, fp)) <= 0)
          break;
-      }
 
-      bytesRead += ret;
+      bytes_read += ret;
    }
 
-   printf("progress: %f         \n", 100.0f * (f32)bytesRead / (f32)fileSize);
+   fclose(fp);
 
-   if (bytesRead != fileSize)
+   if (bytes_read != file_size)
    {
       free(buffer);
-      printf("File loading not finished for file %s, finished %" PRIi32 " of %" PRIi32 " bytes\n", filepath, bytesRead,
-             fileSize);
-      printf("File read failure");
       return -1;
    }
+
 #ifdef WIIU_LOG_RPX
-   log_rpx(filepath, buffer, bytesRead);
+   log_rpx(file_path, buffer, bytes_read);
 #endif
 
-   int ret = HomebrewCopyMemory(buffer, bytesRead, args_size);
+   ret = HomebrewCopyMemory(buffer, bytes_read, args_size);
 
    free(buffer);
 
    if (ret < 0)
-   {
-      printf("Not enough memory");
       return -1;
-   }
 
-   return fileSize;
+   return file_size;
 }

@@ -18,8 +18,8 @@
 #define _MENU_SHADER_MANAGER_H
 
 #include <retro_common_api.h>
+#include <lists/string_list.h>
 
-#include "../retroarch.h"
 #include "../gfx/video_shader_parse.h"
 
 RETRO_BEGIN_DECLS
@@ -32,9 +32,14 @@ enum auto_shader_type
    SHADER_PRESET_GAME
 };
 
-struct video_shader *menu_shader_get(void);
+enum auto_shader_operation
+{
+   AUTO_SHADER_OP_SAVE = 0,
+   AUTO_SHADER_OP_REMOVE,
+   AUTO_SHADER_OP_EXISTS
+};
 
-void menu_shader_manager_free(void);
+struct video_shader *menu_shader_get(void);
 
 /**
  * menu_shader_manager_init:
@@ -45,7 +50,7 @@ bool menu_shader_manager_init(void);
 
 /**
  * menu_shader_manager_set_preset:
- * @shader                   : Shader handle.
+ * @menu_shader              : Shader handle to the menu shader.
  * @type                     : Type of shader.
  * @preset_path              : Preset path to load from.
  * @apply                    : Whether to apply the shader or just update shader information
@@ -53,8 +58,20 @@ bool menu_shader_manager_init(void);
  * Sets shader preset.
  **/
 bool menu_shader_manager_set_preset(
-      struct video_shader *shader,
-      enum rarch_shader_type type, const char *preset_path, bool apply);
+      struct video_shader *menu_shader,
+      enum rarch_shader_type type, 
+      const char *preset_path, 
+      bool apply);
+
+/**
+ * menu_shader_manager_append_preset:
+ * @shader                   : current shader
+ * @preset_path              : path to the preset to append
+ * @dir_video_shader         : temporary diretory
+ *
+ * combine current shader with a shader preset on disk
+ **/
+bool menu_shader_manager_append_preset(struct video_shader *shader, const char* preset_path, const bool prepend);
 
 /**
  * menu_shader_manager_save_auto_preset:
@@ -70,8 +87,12 @@ bool menu_shader_manager_set_preset(
  * Needs to be consistent with retroarch_load_shader_preset()
  * Auto-shaders will be saved as a reference if possible
  **/
-bool menu_shader_manager_save_auto_preset(const struct video_shader *shader,
-      enum auto_shader_type type, bool apply);
+bool menu_shader_manager_save_auto_preset(
+      const struct video_shader *shader,
+      enum auto_shader_type type,
+      const char *dir_video_shader,
+      const char *dir_menu_config,
+      bool apply);
 
 /**
  * menu_shader_manager_save_preset:
@@ -82,25 +103,20 @@ bool menu_shader_manager_save_auto_preset(const struct video_shader *shader,
  * Save a shader preset to disk.
  **/
 bool menu_shader_manager_save_preset(const struct video_shader *shader,
-      const char *basename, bool apply);
-
-/**
- * menu_shader_manager_get_type:
- * @shader                   : shader handle
- *
- * Gets type of shader.
- *
- * Returns: type of shader.
- **/
-enum rarch_shader_type menu_shader_manager_get_type(
-      const struct video_shader *shader);
+      const char *basename,
+      const char *dir_video_shader,
+      const char *dir_menu_config,
+      bool apply);
 
 /**
  * menu_shader_manager_apply_changes:
  *
  * Apply shader state changes.
  **/
-void menu_shader_manager_apply_changes(struct video_shader *shader);
+void menu_shader_manager_apply_changes(
+      struct video_shader *shader,
+      const char *dir_video_shader,
+      const char *dir_menu_config);
 
 int menu_shader_manager_clear_num_passes(struct video_shader *shader);
 
@@ -122,11 +138,15 @@ void menu_shader_manager_clear_pass_path(struct video_shader *shader,
  *
  * Deletes an auto-shader.
  **/
-bool menu_shader_manager_remove_auto_preset(enum auto_shader_type type);
+bool menu_shader_manager_remove_auto_preset(
+      enum auto_shader_type type,
+      const char *dir_video_shader,
+      const char *dir_menu_config);
 
-bool menu_shader_manager_auto_preset_exists(enum auto_shader_type type);
-
-void menu_shader_set_modified(bool modified);
+bool menu_shader_manager_auto_preset_exists(
+      enum auto_shader_type type,
+      const char *dir_video_shader,
+      const char *dir_menu_config);
 
 RETRO_END_DECLS
 

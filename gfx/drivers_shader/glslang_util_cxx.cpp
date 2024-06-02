@@ -16,7 +16,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <string>
-#include <sstream>
 #include <algorithm>
 
 #include <retro_miscellaneous.h>
@@ -26,68 +25,65 @@
 #include <string/stdstring.h>
 
 #ifdef HAVE_CONFIG_H
-#include "config.h"
+#include "../../config.h"
 #endif
 
 #include "glslang_util.h"
 #include "glslang_util_cxx.h"
 #if defined(HAVE_GLSLANG)
-#include <glslang.hpp>
+#include "glslang.hpp"
 #endif
 #include "../../verbosity.h"
 
 static std::string build_stage_source(
       const struct string_list *lines, const char *stage)
 {
-   /* Note: since we have to return a std::string anyway,
-    * there is nothing to be gained from trying to replace
-    * this ostringstream with a C-based alternative
-    * (would require a rewrite of deps/glslang/glslang.cpp) */
-   std::ostringstream str;
-   bool active = true;
    size_t i;
-
-   if (!lines)
+   std::string str;
+   bool active = true;
+   if (!lines || lines->size < 1)
       return "";
-
-   if (lines->size < 1)
-      return "";
+   str.reserve(lines->size);
 
    /* Version header. */
-   str << lines->elems[0].data;;
-   str << '\n';
+   str.append(lines->elems[0].data);
+   str.append("\n");
 
    for (i = 1; i < lines->size; i++)
    {
       const char *line = lines->elems[i].data;
 
-      /* Identify 'stage' (fragment/vertex) */
-      if (!strncmp("#pragma stage ", line, STRLEN_CONST("#pragma stage ")))
+      if (string_starts_with_size(line, "#pragma", STRLEN_CONST("#pragma")))
       {
-         if (!string_is_empty(stage))
+         /* Identify 'stage' (fragment/vertex) */
+         if (!strncmp("#pragma stage ", line, STRLEN_CONST("#pragma stage ")))
          {
-            char expected[128];
-
-            expected[0] = '\0';
-
-            strlcpy(expected, "#pragma stage ", sizeof(expected));
-            strlcat(expected, stage,            sizeof(expected));
-
-            active = strcmp(expected, line) == 0;
+            if (!string_is_empty(stage))
+            {
+               char expected[128];
+               size_t _len = strlcpy(expected, "#pragma stage ", sizeof(expected));
+               strlcpy(expected + _len, stage, sizeof(expected) - _len);
+               active = string_is_equal(expected, line);
+            }
          }
-      }
-      else if (!strncmp("#pragma name ", line, STRLEN_CONST("#pragma name ")) ||
-               !strncmp("#pragma format ", line, STRLEN_CONST("#pragma format ")))
-      {
-         /* Ignore */
+         else if (
+                  !strncmp("#pragma name ", line,
+                  STRLEN_CONST("#pragma name "))
+               || !strncmp("#pragma format ", line,
+                  STRLEN_CONST("#pragma format ")))
+         {
+            /* Ignore */
+         }
+         else if (active)
+            str.append(line);
       }
       else if (active)
-         str << line;
+         str.append(line);
 
-      str << '\n';
+      str.append("\n");
    }
 
-   return str.str();
+   return str;
 }
 
 bool glslang_parse_meta(const struct string_list *lines, glslang_meta *meta)
@@ -103,103 +99,110 @@ bool glslang_parse_meta(const struct string_list *lines, glslang_meta *meta)
    {
       const char *line = lines->elems[i].data;
 
-      /* Check for shader identifier */
-      if (!strncmp("#pragma name ", line, STRLEN_CONST("#pragma name ")))
+      if (string_starts_with_size(line, "#pragma", STRLEN_CONST("#pragma")))
       {
-         const char *str = NULL;
-
-         if (!meta->name.empty())
+         /* Check for shader identifier */
+         if (!strncmp("#pragma name ", line,
+                  STRLEN_CONST("#pragma name ")))
          {
-            RARCH_ERR("[slang]: Trying to declare multiple names for file.\n");
-            return false;
-         }
+            const char *str = NULL;
 
-         str = line + STRLEN_CONST("#pragma name ");
-         while (*str == ' ')
-            str++;
-
-         meta->name = str;
-      }
-      /* Check for shader parameters */
-      else if (!strncmp("#pragma parameter ", line, STRLEN_CONST("#pragma parameter ")))
-      {
-         float initial, minimum, maximum, step;
-         int ret = sscanf(
-               line, "#pragma parameter %63s \"%63[^\"]\" %f %f %f %f",
-               id, desc, &initial, &minimum, &maximum, &step);
-
-         if (ret == 5)
-         {
-            step = 0.1f * (maximum - minimum);
-            ret  = 6;
-         }
-
-         if (ret == 6)
-         {
-            bool parameter_found   = false;
-            size_t parameter_index = 0;
-            size_t j;
-
-            for (j = 0; j < meta->parameters.size(); j++)
+            if (!meta->name.empty())
             {
-               /* Note: LHS is a std:string, RHS is a C string.
-                * (the glslang_meta stuff has to be C++) */
-               if (meta->parameters[j].id == id)
-               {
-                  parameter_found = true;
-                  parameter_index = j;
-                  break;
-               }
+               RARCH_ERR("[slang]: Trying to declare multiple names for file.\n");
+               return false;
             }
 
-            /* Allow duplicate #pragma parameter, but only
-             * if they are exactly the same. */
-            if (parameter_found)
-            {
-               const glslang_parameter *parameter = 
-                  &meta->parameters[parameter_index];
+            str = line + STRLEN_CONST("#pragma name ");
+            while (*str == ' ')
+               str++;
 
-               if (   parameter->desc    != desc    ||
-                      parameter->initial != initial ||
-                      parameter->minimum != minimum ||
-                      parameter->maximum != maximum ||
-                      parameter->step    != step
-                  )
+            meta->name = str;
+         }
+         /* Check for shader parameters */
+         else if (!strncmp("#pragma parameter ", line,
+                  STRLEN_CONST("#pragma parameter ")))
+         {
+            float initial, minimum, maximum, step;
+            int ret = sscanf(
+                  line, "#pragma parameter %63s \"%63[^\"]\" %f %f %f %f",
+                  id, desc, &initial, &minimum, &maximum, &step);
+
+            if (ret == 5)
+            {
+               step = 0.1f * (maximum - minimum);
+               ret  = 6;
+            }
+
+            if (ret == 6)
+            {
+               bool parameter_found   = false;
+               size_t parameter_index = 0;
+               size_t j;
+
+               for (j = 0; j < meta->parameters.size(); j++)
                {
-                  RARCH_ERR("[slang]: Duplicate parameters found for \"%s\", but arguments do not match.\n", id);
-                  return false;
+                  /* Note: LHS is a std:string, RHS is a C string.
+                   * (the glslang_meta stuff has to be C++) */
+                  if (meta->parameters[j].id == id)
+                  {
+                     parameter_found = true;
+                     parameter_index = j;
+                     break;
+                  }
                }
+
+               /* Allow duplicate #pragma parameter, but only
+                * if they are exactly the same. */
+               if (parameter_found)
+               {
+                  const glslang_parameter *parameter = 
+                     &meta->parameters[parameter_index];
+
+                  if (   parameter->desc    != desc    ||
+                        parameter->initial != initial ||
+                        parameter->minimum != minimum ||
+                        parameter->maximum != maximum ||
+                        parameter->step    != step
+                     )
+                  {
+                     RARCH_ERR("[slang]: Duplicate parameters found for \"%s\", but arguments do not match.\n", id);
+                     return false;
+                  }
+               }
+               else
+                  meta->parameters.push_back({ id, desc, initial, minimum, maximum, step });
             }
             else
-               meta->parameters.push_back({ id, desc, initial, minimum, maximum, step });
+            {
+               RARCH_ERR("[slang]: Invalid #pragma parameter line: \"%s\".\n",
+                     line);
+               return false;
+            }
          }
-         else
+         /* Check for framebuffer format */
+         else if (!strncmp("#pragma format ", line,
+                  STRLEN_CONST("#pragma format ")))
          {
-            RARCH_ERR("[slang]: Invalid #pragma parameter line: \"%s\".\n", line);
-            return false;
-         }
-      }
-      /* Check for framebuffer format */
-      else if (!strncmp("#pragma format ", line, STRLEN_CONST("#pragma format ")))
-      {
-         const char *str = NULL;
+            const char *str = NULL;
 
-         if (meta->rt_format != SLANG_FORMAT_UNKNOWN)
-         {
-            RARCH_ERR("[slang]: Trying to declare format multiple times for file.\n");
-            return false;
-         }
+            if (meta->rt_format != SLANG_FORMAT_UNKNOWN)
+            {
+               RARCH_ERR("[slang]: Trying to declare format multiple times for file.\n");
+               return false;
+            }
 
-         str = line + STRLEN_CONST("#pragma format ");
-         while (*str == ' ')
-            str++;
+            str = line + STRLEN_CONST("#pragma format ");
+            while (*str == ' ')
+               str++;
 
-         meta->rt_format = glslang_find_format(str);
+            meta->rt_format = glslang_find_format(str);
 
-         if (meta->rt_format == SLANG_FORMAT_UNKNOWN)
-         {
-            RARCH_ERR("[slang]: Failed to find format \"%s\".\n", str);
-            return false;
+            if (meta->rt_format == SLANG_FORMAT_UNKNOWN)
+            {
+               RARCH_ERR("[slang]: Failed to find format \"%s\".\n", str);
+               return false;
+            }
          }
       }
    }
@@ -210,41 +213,39 @@ bool glslang_parse_meta(const struct string_list *lines, glslang_meta *meta)
 bool glslang_compile_shader(const char *shader_path, glslang_output *output)
 {
 #if defined(HAVE_GLSLANG)
-   struct string_list *lines = string_list_new();
-
-   if (!lines)
+   struct string_list lines;
+   
+   if (!string_list_initialize(&lines))
       return false;
 
-   RARCH_LOG("[slang]: Compiling shader \"%s\".\n", shader_path);
+   RARCH_LOG("[slang]: Compiling shader: \"%s\".\n", shader_path);
 
-   if (!glslang_read_shader_file(shader_path, lines, true))
+   if (!glslang_read_shader_file(shader_path, &lines, true))
       goto error;
    output->meta = glslang_meta{};
-   if (!glslang_parse_meta(lines, &output->meta))
+   if (!glslang_parse_meta(&lines, &output->meta))
       goto error;
 
-   if (    !glslang::compile_spirv(build_stage_source(lines, "vertex"),
+   if (!glslang::compile_spirv(build_stage_source(&lines, "vertex"),
             glslang::StageVertex, &output->vertex))
    {
-      RARCH_ERR("Failed to compile vertex shader stage.\n");
+      RARCH_ERR("[slang]: Failed to compile vertex shader stage.\n");
       goto error;
    }
 
-   if (    !glslang::compile_spirv(build_stage_source(lines, "fragment"),
+   if (!glslang::compile_spirv(build_stage_source(&lines, "fragment"),
             glslang::StageFragment, &output->fragment))
    {
-      RARCH_ERR("Failed to compile fragment shader stage.\n");
+      RARCH_ERR("[slang]: Failed to compile fragment shader stage.\n");
       goto error;
    }
 
-   string_list_free(lines);
+   string_list_deinitialize(&lines);
 
    return true;
 
 error:
-
-   if (lines)
-      string_list_free(lines);
+   string_list_deinitialize(&lines);
 #endif
 
    return false;

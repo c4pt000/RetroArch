@@ -38,80 +38,21 @@
 #include "../frontend.h"
 #include "../frontend_driver.h"
 #include "../../configuration.h"
-#include "../../defaults.h"
 #include "../../content.h"
+#include "../../command.h"
+#include "../../defaults.h"
+#include "../../file_path_special.h"
+#include "../../paths.h"
 #include "../../retroarch.h"
 #include "../../verbosity.h"
-#include "../../command.h"
 #include "../../tasks/tasks_internal.h"
-#include "../../file_path_special.h"
 
-void RWebAudioRecalibrateTime(void);
 void dummyErrnoCodes(void);
-
-static unsigned emscripten_fullscreen_reinit;
-static unsigned emscripten_frame_count = 0;
-
-static EM_BOOL emscripten_fullscreenchange_cb(int event_type,
-   const EmscriptenFullscreenChangeEvent *fullscreen_change_event,
-   void *user_data)
-{
-   (void)event_type;
-   (void)fullscreen_change_event;
-   (void)user_data;
-
-   emscripten_fullscreen_reinit = 5;
-
-   return EM_TRUE;
-}
-
-static void emscripten_mainloop(void)
-{
-   int ret;
-   video_frame_info_t video_info;
-
-   RWebAudioRecalibrateTime();
-
-   emscripten_frame_count++;
-
-   video_driver_build_info(&video_info);
-
-   /* Disable BFI during fast forward, slow-motion,
-    * and pause to prevent flicker. */
-   if (
-         video_info.black_frame_insertion
-         && !video_info.input_driver_nonblock_state
-         && !video_info.runloop_is_slowmotion
-         && !video_info.runloop_is_paused)
-   {
-      if ((emscripten_frame_count & 1) == 0)
-      {
-         glClear(GL_COLOR_BUFFER_BIT);
-         video_info.cb_swap_buffers(video_info.context_data, &video_info);
-         return;
-      }
-   }
-
-   if (emscripten_fullscreen_reinit != 0)
-   {
-      if (--emscripten_fullscreen_reinit == 0)
-         command_event(CMD_EVENT_REINIT, NULL);
-   }
-
-   ret = runloop_iterate();
-
-   task_queue_check();
-
-   if (ret != -1)
-      return;
-
-   main_exit(NULL);
-   emscripten_force_exit(0);
-}
+void emscripten_mainloop(void);
 
 void cmd_savefiles(void)
 {
-   event_save_files();
+   command_event(CMD_EVENT_SAVE_FILES, NULL);
 }
 
 void cmd_save_state(void)
@@ -132,15 +73,14 @@ void cmd_take_screenshot(void)
 static void frontend_emscripten_get_env(int *argc, char *argv[],
       void *args, void *params_data)
 {
-   (void)args;
-
-   unsigned i;
-   char base_path[PATH_MAX] = {0};
-   char user_path[PATH_MAX] = {0};
+   char base_path[PATH_MAX];
+   char user_path[PATH_MAX];
    const char *home         = getenv("HOME");
 
    if (home)
    {
+      base_path[0]          = '\0';
+      user_path[0]          = '\0';
       snprintf(base_path, sizeof(base_path),
             "%s/retroarch", home);
       snprintf(user_path, sizeof(user_path),
@@ -148,8 +88,8 @@ static void frontend_emscripten_get_env(int *argc, char *argv[],
    }
    else
    {
-      snprintf(base_path, sizeof(base_path), "retroarch");
-      snprintf(user_path, sizeof(user_path), "retroarch/userdata");
+      strlcpy(base_path, "retroarch", sizeof(base_path));
+      strlcpy(user_path, "retroarch/userdata", sizeof(user_path));
    }
 
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CORE], base_path,
@@ -160,20 +100,20 @@ static void frontend_emscripten_get_env(int *argc, char *argv[],
          "bundle/assets", sizeof(g_defaults.dirs[DEFAULT_DIR_ASSETS]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_AUTOCONFIG], base_path,
          "bundle/autoconfig", sizeof(g_defaults.dirs[DEFAULT_DIR_AUTOCONFIG]));
-   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CURSOR], base_path,
-         "bundle/database/cursors", sizeof(g_defaults.dirs[DEFAULT_DIR_CURSOR]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_DATABASE], base_path,
          "bundle/database/rdb", sizeof(g_defaults.dirs[DEFAULT_DIR_DATABASE]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CORE_INFO], base_path,
          "bundle/info", sizeof(g_defaults.dirs[DEFAULT_DIR_CORE_INFO]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_OVERLAY], base_path,
          "bundle/overlays", sizeof(g_defaults.dirs[DEFAULT_DIR_OVERLAY]));
-#ifdef HAVE_VIDEO_LAYOUT
-   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_VIDEO_LAYOUT], base_path,
-         "bundle/layouts", sizeof(g_defaults.dirs[DEFAULT_DIR_VIDEO_LAYOUT]));
-#endif
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_OSK_OVERLAY], base_path,
+         "bundle/overlays/keyboards", sizeof(g_defaults.dirs[DEFAULT_DIR_OSK_OVERLAY]));
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_SHADER], base_path,
          "bundle/shaders", sizeof(g_defaults.dirs[DEFAULT_DIR_SHADER]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_AUDIO_FILTER], base_path,
+         "bundle/filters/audio", sizeof(g_defaults.dirs[DEFAULT_DIR_AUDIO_FILTER]));
+   fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_VIDEO_FILTER], base_path,
+         "bundle/filters/video", sizeof(g_defaults.dirs[DEFAULT_DIR_VIDEO_FILTER]));
 
    /* user data dirs */
    fill_pathname_join(g_defaults.dirs[DEFAULT_DIR_CHEATS], user_path,
@@ -208,35 +148,26 @@ static void frontend_emscripten_get_env(int *argc, char *argv[],
    /* history and main config */
    strlcpy(g_defaults.dirs[DEFAULT_DIR_CONTENT_HISTORY],
          user_path, sizeof(g_defaults.dirs[DEFAULT_DIR_CONTENT_HISTORY]));
-   fill_pathname_join(g_defaults.path.config, user_path,
-         file_path_str(FILE_PATH_MAIN_CONFIG), sizeof(g_defaults.path.config));
+   fill_pathname_join(g_defaults.path_config, user_path,
+         FILE_PATH_MAIN_CONFIG, sizeof(g_defaults.path_config));
 
-   for (i = 0; i < DEFAULT_DIR_LAST; i++)
-   {
-      const char *dir_path = g_defaults.dirs[i];
-      if (!string_is_empty(dir_path))
-         path_mkdir(dir_path);
-   }
+#ifndef IS_SALAMANDER
+   dir_check_defaults("custom.ini");
+#endif
 }
 
 int main(int argc, char *argv[])
 {
-   EMSCRIPTEN_RESULT r;
-
    dummyErrnoCodes();
 
-   emscripten_set_canvas_element_size("#canvas", 800, 600);
-   emscripten_set_element_css_size("#canvas", 800.0, 600.0);
+   EM_ASM({
+      specialHTMLTargets["!canvas"] = Module.canvas;
+   });
+
+   emscripten_set_canvas_element_size("!canvas", 800, 600);
+   emscripten_set_element_css_size("!canvas", 800.0, 600.0);
    emscripten_set_main_loop(emscripten_mainloop, 0, 0);
    rarch_main(argc, argv, NULL);
-
-   r = emscripten_set_fullscreenchange_callback("#document", NULL, false,
-      emscripten_fullscreenchange_cb);
-   if (r != EMSCRIPTEN_RESULT_SUCCESS)
-   {
-      RARCH_ERR(
-         "[EMSCRIPTEN/CTX] failed to create fullscreen callback: %d\n", r);
-   }
 
    return 0;
 }
@@ -257,18 +188,24 @@ frontend_ctx_driver_t frontend_ctx_emscripten = {
    NULL,                         /* get_architecture */
    NULL,                         /* get_powerstate */
    NULL,                         /* parse_drive_list */
-   NULL,                         /* get_mem_total */
-   NULL,                         /* get_mem_used */
+   NULL,                         /* get_total_mem */
+   NULL,                         /* get_free_mem  */
    NULL,                         /* install_sighandlers */
    NULL,                         /* get_signal_handler_state */
    NULL,                         /* set_signal_handler_state */
    NULL,                         /* destroy_signal_handler_state */
    NULL,                         /* attach_console */
    NULL,                         /* detach_console */
+   NULL,                         /* get_lakka_version */
+   NULL,                         /* set_screen_brightness */
    NULL,                         /* watch_path_for_changes */
    NULL,                         /* check_for_path_changes */
    NULL,                         /* set_sustained_performance_mode */
    NULL,                         /* get_cpu_model_name */
    NULL,                         /* get_user_language */
-   "emscripten"
+   NULL,                         /* is_narrator_running */
+   NULL,                         /* accessibility_speak */
+   NULL,                         /* set_gamemode        */
+   "emscripten",                 /* ident               */
+   NULL                          /* get_video_driver    */
 };

@@ -23,7 +23,6 @@
 
 #include "tasks_internal.h"
 #include "../file_path_special.h"
-#include "../verbosity.h"
 #include "../msg_hash.h"
 
 #define CALLBACK_ERROR_SIZE 4200
@@ -44,23 +43,20 @@ static int file_decompressed_subdir(const char *name,
       unsigned cmode, uint32_t csize,uint32_t size,
       uint32_t crc32, struct archive_extract_userdata *userdata)
 {
+   size_t _len;
    char path_dir[PATH_MAX_LENGTH];
    char path[PATH_MAX_LENGTH];
    size_t name_len            = strlen(name);
    char last_char             = name[name_len - 1];
-
-   path_dir[0] = path[0] = '\0';
-
    /* Ignore directories, go to next file. */
    if (last_char == '/' || last_char == '\\')
       return 1;
-
    if (strstr(name, userdata->dec->subdir) != name)
       return 1;
 
    name += strlen(userdata->dec->subdir) + 1;
 
-   fill_pathname_join(path,
+   fill_pathname_join_special(path,
          userdata->dec->target_dir, name, sizeof(path));
    fill_pathname_basedir(path_dir, path, sizeof(path_dir));
 
@@ -72,16 +68,20 @@ static int file_decompressed_subdir(const char *name,
             cdata, cmode, csize, size, crc32, userdata))
       goto error;
 
-#if 0
-   RARCH_LOG("[deflate subdir] Path: %s, CRC32: 0x%x\n", name, crc32);
-#endif
-
    return 1;
 
 error:
    userdata->dec->callback_error = (char*)malloc(CALLBACK_ERROR_SIZE);
-   snprintf(userdata->dec->callback_error,
-         CALLBACK_ERROR_SIZE, "Failed to deflate %s.\n", path);
+   _len  = strlcpy(userdata->dec->callback_error,
+         "Failed to deflate ",
+         CALLBACK_ERROR_SIZE);
+   _len += strlcpy(
+		   userdata->dec->callback_error + _len,
+		   path,
+         CALLBACK_ERROR_SIZE - _len);
+   userdata->dec->callback_error[  _len] = '.';
+   userdata->dec->callback_error[++_len] = '\n';
+   userdata->dec->callback_error[++_len] = '\0';
 
    return 0;
 }
@@ -90,39 +90,38 @@ static int file_decompressed(const char *name, const char *valid_exts,
    const uint8_t *cdata, unsigned cmode, uint32_t csize, uint32_t size,
    uint32_t crc32, struct archive_extract_userdata *userdata)
 {
+   size_t _len;
    char path[PATH_MAX_LENGTH];
    decompress_state_t    *dec = userdata->dec;
    size_t name_len            = strlen(name);
    char last_char             = name[name_len - 1];
-
-   path[0] = '\0';
-
    /* Ignore directories, go to next file. */
    if (last_char == '/' || last_char == '\\')
       return 1;
-
    /* Make directory */
-   fill_pathname_join(path, dec->target_dir, name, sizeof(path));
+   fill_pathname_join_special(path, dec->target_dir, name, sizeof(path));
    path_basedir_wrapper(path);
 
    if (!path_mkdir(path))
       goto error;
 
-   fill_pathname_join(path, dec->target_dir, name, sizeof(path));
+   fill_pathname_join_special(path, dec->target_dir, name, sizeof(path));
 
    if (!file_archive_perform_mode(path, valid_exts,
             cdata, cmode, csize, size, crc32, userdata))
       goto error;
 
-#if 0
-   RARCH_LOG("[deflate] Path: %s, CRC32: 0x%x\n", name, crc32);
-#endif
    return 1;
 
 error:
    dec->callback_error = (char*)malloc(CALLBACK_ERROR_SIZE);
-   snprintf(dec->callback_error, CALLBACK_ERROR_SIZE,
-         "Failed to deflate %s.\n", path);
+   _len  = strlcpy(dec->callback_error, "Failed to deflate ",
+		   CALLBACK_ERROR_SIZE);
+   _len += strlcpy(dec->callback_error + _len,
+		   path, CALLBACK_ERROR_SIZE     - _len);
+   dec->callback_error[  _len] = '.';
+   dec->callback_error[++_len] = '\n';
+   dec->callback_error[++_len] = '\0';
 
    return 0;
 }
@@ -261,7 +260,7 @@ bool task_check_decompress(const char *source_file)
    return task_queue_find(&find_data);
 }
 
-bool task_push_decompress(
+void *task_push_decompress(
       const char *source_file,
       const char *target_dir,
       const char *target_file,
@@ -269,8 +268,10 @@ bool task_push_decompress(
       const char *valid_ext,
       retro_task_callback_t cb,
       void *user_data,
-      void *frontend_userdata)
+      void *frontend_userdata,
+      bool mute)
 {
+   size_t _len;
    char tmp[PATH_MAX_LENGTH];
    const char *ext            = NULL;
    decompress_state_t *s      = NULL;
@@ -279,12 +280,7 @@ bool task_push_decompress(
    tmp[0] = '\0';
 
    if (string_is_empty(target_dir) || string_is_empty(source_file))
-   {
-      RARCH_WARN(
-            "[decompress] Empty or null source file or"
-            " target directory arguments.\n");
-      return false;
-   }
+      return NULL;
 
    ext = path_get_extension(source_file);
 
@@ -299,38 +295,21 @@ bool task_push_decompress(
 #endif
          )
       )
-   {
-      RARCH_WARN(
-            "[decompress] File '%s' does not exist"
-            " or is not a compressed file.\n",
-            source_file);
-      return false;
-   }
+      return NULL;
 
    if (!valid_ext || !valid_ext[0])
       valid_ext   = NULL;
 
    if (task_check_decompress(source_file))
-   {
-      RARCH_LOG(
-            "[decompress] File '%s' already being decompressed.\n",
-            source_file);
-      return false;
-   }
+      return NULL;
 
-   RARCH_LOG("[decompress] File '%s.\n", source_file);
+   if (!(s = (decompress_state_t*)calloc(1, sizeof(*s))))
+      return NULL;
 
-   s              = (decompress_state_t*)calloc(1, sizeof(*s));
-
-   if (!s)
-      return false;
-
-   t                   = (retro_task_t*)calloc(1, sizeof(*t));
-
-   if (!t)
+   if (!(t = task_init()))
    {
       free(s);
-      return false;
+      return NULL;
    }
 
    s->source_file      = strdup(source_file);
@@ -360,13 +339,21 @@ bool task_push_decompress(
    t->callback         = cb;
    t->user_data        = user_data;
 
-   snprintf(tmp, sizeof(tmp), "%s '%s'",
-         msg_hash_to_str(MSG_EXTRACTING),
-         path_basename(source_file));
+   _len                = strlcpy(tmp,
+		   msg_hash_to_str(MSG_EXTRACTING), sizeof(tmp));
+   tmp[  _len]         = ' ';
+   tmp[++_len]         = '\'';
+   tmp[++_len]         = '\0';
+   _len               += strlcpy(tmp + _len,
+         path_basename(source_file),
+                         sizeof(tmp) - _len);
+   tmp[_len  ]         = '\'';
+   tmp[++_len]         = '\0';
 
    t->title            = strdup(tmp);
+   t->mute             = mute;
 
    task_queue_push(t);
 
-   return true;
+   return t;
 }

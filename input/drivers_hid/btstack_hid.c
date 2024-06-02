@@ -29,7 +29,7 @@
 #include <boolean.h>
 #include <retro_miscellaneous.h>
 #include <rthreads/rthreads.h>
-#ifdef HAVE_DYNAMIC
+#ifdef HAVE_DYLIB
 #include <dynamic/dylib.h>
 #endif
 #include <string/stdstring.h>
@@ -279,16 +279,16 @@ BTDIMPORT const hci_cmd_t* l2cap_decline_connection_ptr;
 
 /* RFCOMM EVENTS */
 
-// data: event(8), len(8), status (8), address (48), handle (16), server channel(8), rfcomm_cid(16), max frame size(16)
+/* data: event(8), len(8), status (8), address (48), handle (16), server channel(8), rfcomm_cid(16), max frame size(16) */
 #define RFCOMM_EVENT_OPEN_CHANNEL_COMPLETE                  0x80
 
-// data: event(8), len(8), rfcomm_cid(16)
+/* data: event(8), len(8), rfcomm_cid(16) */
 #define RFCOMM_EVENT_CHANNEL_CLOSED                         0x81
 
-// data: event (8), len(8), address(48), channel (8), rfcomm_cid (16)
+/* data: event (8), len(8), address(48), channel (8), rfcomm_cid (16) */
 #define RFCOMM_EVENT_INCOMING_CONNECTION                    0x82
 
-// data: event (8), len(8), rfcommid (16), ...
+/* data: event (8), len(8), rfcommid (16), ... */
 #define RFCOMM_EVENT_REMOTE_LINE_STATUS                     0x83
 
 /* data: event(8), len(8), rfcomm_cid(16), credits(8) */
@@ -625,7 +625,7 @@ joypad_connection_t *slots;
 
 typedef struct btstack_hid
 {
-   joypad_connection_t *slots;
+   void *empty;
 } btstack_hid_t;
 
 enum btpad_state
@@ -751,13 +751,12 @@ static CFRunLoopSourceRef btstack_quit_source;
 
 static void *btstack_get_handle(void)
 {
-#ifdef HAVE_DYNAMIC
+#ifdef HAVE_DYLIB
    void *handle = dylib_load("/usr/lib/libBTstack.dylib");
 
    if (handle)
       return handle;
 #endif
-
    return NULL;
 }
 
@@ -977,6 +976,7 @@ static void btpad_queue_reset(void)
    can_run         = 1;
 }
 
+#if 0
 static void btpad_queue_btstack_set_power_mode(
       struct btpad_queue_command *cmd, uint8_t on)
 {
@@ -989,6 +989,7 @@ static void btpad_queue_btstack_set_power_mode(
    btpad_increment_position(&insert_position);
    btpad_queue_process();
 }
+#endif
 
 static void btpad_set_inquiry_state(bool on)
 {
@@ -1246,7 +1247,7 @@ static void btpad_packet_handler(uint8_t packet_type,
 
 static bool btstack_try_load(void)
 {
-#ifdef HAVE_DYNAMIC
+#ifdef HAVE_DYLIB
    unsigned i;
 #endif
    void *handle   = NULL;
@@ -1262,7 +1263,7 @@ static bool btstack_try_load(void)
    if (!handle)
       return false;
 
-#ifdef HAVE_DYNAMIC
+#ifdef HAVE_DYLIB
    for (i = 0; grabbers[i].name; i ++)
    {
       *grabbers[i].target = dylib_proc(handle, grabbers[i].name);
@@ -1358,26 +1359,82 @@ static void btstack_hid_joypad_get_buttons(void *data, unsigned port,
 {
   btstack_hid_t        *hid   = (btstack_hid_t*)data;
   if (hid)
-    pad_connection_get_buttons(&hid->slots[port], port, state);
+    pad_connection_get_buttons(&slots[port], port, state);
   else
     BIT256_CLEAR_ALL_PTR(state);
 }
 
-static bool btstack_hid_joypad_button(void *data,
+static int16_t btstack_hid_joypad_button(void *data,
       unsigned port, uint16_t joykey)
 {
-  input_bits_t buttons;
-  btstack_hid_joypad_get_buttons(data, port, &buttons);
+   input_bits_t buttons;
+   btstack_hid_joypad_get_buttons(data, port, &buttons);
 
-  /* Check hat. */
-  if (GET_HAT_DIR(joykey))
-    return false;
+   /* Check hat. */
+   if (GET_HAT_DIR(joykey))
+      return 0;
+   else if ((port < MAX_USERS) && (joykey < 32))
+      return (BIT256_GET(buttons, joykey) != 0);
+   return 0;
+}
 
-  /* Check the button. */
-  if ((port < MAX_USERS) && (joykey < 32))
-    return (BIT256_GET(buttons, joykey) != 0);
+static int16_t btstack_hid_joypad_axis(void *data,
+      unsigned port, uint32_t joyaxis)
+{
 
-  return false;
+   if (AXIS_NEG_GET(joyaxis) < 4)
+   {
+      int16_t val = pad_connection_get_axis(
+            &slots[port], port, AXIS_NEG_GET(joyaxis));
+
+      if (val < 0)
+         return val;
+   }
+   else if (AXIS_POS_GET(joyaxis) < 4)
+   {
+      int16_t val = pad_connection_get_axis(
+            &slots[port], port, AXIS_POS_GET(joyaxis));
+
+      if (val > 0)
+         return val;
+   }
+   return 0;
+}
+
+
+static int16_t btstack_hid_joypad_state(
+      void *data,
+      rarch_joypad_info_t *joypad_info,
+      const void *binds_data,
+      unsigned port)
+{
+   unsigned i;
+   int16_t ret                          = 0;
+   const struct retro_keybind *binds    = (const struct retro_keybind*)binds_data;
+   uint16_t port_idx                     = joypad_info->joy_idx;
+   joypad_connection_t              *pad = &slots[port_idx];
+
+   if (!pad)
+      return 0;
+
+   for (i = 0; i < RARCH_FIRST_CUSTOM_BIND; i++)
+   {
+      /* Auto-binds are per joypad, not per user. */
+      const uint64_t joykey  = (binds[i].joykey != NO_BTN)
+         ? binds[i].joykey  : joypad_info->auto_binds[i].joykey;
+      const uint32_t joyaxis = (binds[i].joyaxis != AXIS_NONE)
+         ? binds[i].joyaxis : joypad_info->auto_binds[i].joyaxis;
+      if (
+               (uint16_t)joykey != NO_BTN 
+            && btstack_hid_joypad_button(data, port_idx, (uint16_t)joykey))
+         ret |= ( 1 << i);
+      else if (joyaxis != AXIS_NONE &&
+            ((float)abs(btstack_hid_joypad_axis(data, port_idx, joyaxis)) 
+             / 0x8000) > joypad_info->axis_threshold)
+         ret |= (1 << i);
+   }
+
+   return ret;
 }
 
 static bool btstack_hid_joypad_rumble(void *data, unsigned pad,
@@ -1386,33 +1443,7 @@ static bool btstack_hid_joypad_rumble(void *data, unsigned pad,
    btstack_hid_t        *hid   = (btstack_hid_t*)data;
    if (!hid)
       return false;
-   return pad_connection_rumble(&hid->slots[pad], pad, effect, strength);
-}
-
-static int16_t btstack_hid_joypad_axis(void *data, unsigned port, uint32_t joyaxis)
-{
-   btstack_hid_t         *hid = (btstack_hid_t*)data;
-   int16_t               val  = 0;
-
-   if (joyaxis == AXIS_NONE)
-      return 0;
-
-   if (AXIS_NEG_GET(joyaxis) < 4)
-   {
-      val += pad_connection_get_axis(&hid->slots[port], port, AXIS_NEG_GET(joyaxis));
-
-      if (val >= 0)
-         val = 0;
-   }
-   else if(AXIS_POS_GET(joyaxis) < 4)
-   {
-      val += pad_connection_get_axis(&hid->slots[port], port, AXIS_POS_GET(joyaxis));
-
-      if (val <= 0)
-         val = 0;
-   }
-
-   return val;
+   return pad_connection_rumble(&slots[pad], pad, effect, strength);
 }
 
 static void btstack_hid_free(const void *data)
@@ -1422,7 +1453,7 @@ static void btstack_hid_free(const void *data)
    if (!hid)
       return;
 
-   pad_connection_destroy(hid->slots);
+   pad_connection_destroy(slots);
    btpad_set_inquiry_state(true);
    btstack_set_poweron(false);
 
@@ -1437,9 +1468,9 @@ static void *btstack_hid_init(void)
    if (!hid)
       goto error;
 
-   hid->slots = pad_connection_init(MAX_USERS);
+   slots = pad_connection_init(MAX_USERS);
 
-   if (!hid->slots)
+   if (!slots)
       goto error;
 
    btstack_set_poweron(false);
@@ -1462,6 +1493,7 @@ hid_driver_t btstack_hid = {
    btstack_hid_joypad_query,
    btstack_hid_free,
    btstack_hid_joypad_button,
+   btstack_hid_joypad_state,
    btstack_hid_joypad_get_buttons,
    btstack_hid_joypad_axis,
    btstack_hid_poll,

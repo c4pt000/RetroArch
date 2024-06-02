@@ -25,10 +25,6 @@
 #include "../common/egl_common.h"
 #endif
 
-#if defined(HAVE_OPENGL) || defined(HAVE_OPENGLES)
-#include "../common/gl_common.h"
-#endif
-
 #include "../../frontend/frontend_driver.h"
 #include "../../verbosity.h"
 
@@ -37,13 +33,10 @@ typedef struct
 #ifdef HAVE_EGL
    egl_ctx_data_t egl;
 #endif
-
    EGLNativeWindowType native_window;
-   bool resize;
    unsigned width, height;
+   bool resize;
 } vivante_ctx_data_t;
-
-static enum gfx_ctx_api viv_api = GFX_CTX_NONE;
 
 static void gfx_ctx_vivante_destroy(void *data)
 {
@@ -61,7 +54,7 @@ static void gfx_ctx_vivante_destroy(void *data)
 
 }
 
-static void *gfx_ctx_vivante_init(video_frame_info_t *video_info, void *video_driver)
+static void *gfx_ctx_vivante_init(void *video_driver)
 {
 #ifdef HAVE_EGL
    EGLint n;
@@ -93,18 +86,16 @@ static void *gfx_ctx_vivante_init(video_frame_info_t *video_info, void *video_dr
    system("setterm -cursor off");
 
 #ifdef HAVE_EGL
-   if (!egl_init_context(&viv->egl, EGL_NONE, EGL_DEFAULT_DISPLAY, &major, &minor,
+   if (!egl_init_context(&viv->egl, EGL_NONE,
+            EGL_DEFAULT_DISPLAY, &major, &minor,
             &n, attribs, NULL))
-   {
-      egl_report_error();
       goto error;
-   }
 #endif
 
    return viv;
 
 error:
-   RARCH_ERR("[Vivante fbdev]: EGL error: %d.\n", eglGetError());
+   egl_report_error();
    gfx_ctx_vivante_destroy(viv);
    return NULL;
 }
@@ -120,8 +111,7 @@ static void gfx_ctx_vivante_get_video_size(void *data,
 }
 
 static void gfx_ctx_vivante_check_window(void *data, bool *quit,
-      bool *resize, unsigned *width, unsigned *height,
-      bool is_shutdown)
+      bool *resize, unsigned *width, unsigned *height)
 {
    unsigned new_width, new_height;
    vivante_ctx_data_t *viv = (vivante_ctx_data_t*)data;
@@ -132,16 +122,15 @@ static void gfx_ctx_vivante_check_window(void *data, bool *quit,
 
    if (new_width != *width || new_height != *height)
    {
-      *width  = new_width;
-      *height = new_height;
-      *resize = true;
+      *width               = new_width;
+      *height              = new_height;
+      *resize              = true;
    }
 
-   *quit = (bool)frontend_driver_get_signal_handler_state();
+   *quit                   = (bool)frontend_driver_get_signal_handler_state();
 }
 
 static bool gfx_ctx_vivante_set_video_mode(void *data,
-      video_frame_info_t *video_info,
       unsigned width, unsigned height,
       bool fullscreen)
 {
@@ -151,27 +140,22 @@ static bool gfx_ctx_vivante_set_video_mode(void *data,
       EGL_NONE
    };
 #endif
-   vivante_ctx_data_t *viv = (vivante_ctx_data_t*)data;
+   vivante_ctx_data_t *viv       = (vivante_ctx_data_t*)data;
 
    /* Pick some arbitrary default. */
    if (!width || !fullscreen)
-      width = 1280;
+      width                      = 1280;
    if (!height || !fullscreen)
-      height = 1024;
+      height                     = 1024;
 
-   viv->width    = width;
-   viv->height   = height;
+   viv->width                    = width;
+   viv->height                   = height;
 
 #ifdef HAVE_EGL
    if (!egl_create_context(&viv->egl, attribs))
-   {
-      egl_report_error();
       goto error;
-   }
 #endif
-
    viv->native_window = fbCreateWindow(fbGetDisplayByIndex(0), 0, 0, 0, 0);
-
 #ifdef HAVE_EGL
    if (!egl_create_surface(&viv->egl, viv->native_window))
       goto error;
@@ -180,7 +164,7 @@ static bool gfx_ctx_vivante_set_video_mode(void *data,
    return true;
 
 error:
-   RARCH_ERR("[Vivante fbdev]: EGL error: %d.\n", eglGetError());
+   egl_report_error();
    gfx_ctx_vivante_destroy(data);
    return false;
 }
@@ -195,65 +179,39 @@ static void gfx_ctx_vivante_input_driver(void *data,
 
 static enum gfx_ctx_api gfx_ctx_vivante_get_api(void *data)
 {
-   return viv_api;
+   return GFX_CTX_OPENGL_ES_API;
 }
 
 static bool gfx_ctx_vivante_bind_api(void *data,
       enum gfx_ctx_api api, unsigned major, unsigned minor)
 {
-
-   viv_api = api;
-
-   if (api == GFX_CTX_OPENGL_ES_API)
-      return true;
-   return false;
+   return (api == GFX_CTX_OPENGL_ES_API);
 }
 
-static bool gfx_ctx_vivante_has_focus(void *data)
-{
-   (void)data;
-   return true;
-}
-
-static bool gfx_ctx_vivante_suppress_screensaver(void *data, bool enable)
-{
-   (void)data;
-   (void)enable;
-   return false;
-}
+static void gfx_ctx_vivante_set_flags(void *data, uint32_t flags) { }
+static bool gfx_ctx_vivante_has_focus(void *data) { return true; }
+static bool gfx_ctx_vivante_suppress_screensaver(void *data, bool enable) { return false; }
 
 static void gfx_ctx_vivante_set_swap_interval(void *data, int swap_interval)
 {
-   vivante_ctx_data_t *viv = (vivante_ctx_data_t*)data;
-
 #ifdef HAVE_EGL
+   vivante_ctx_data_t *viv = (vivante_ctx_data_t*)data;
    egl_set_swap_interval(&viv->egl, swap_interval);
 #endif
 }
 
-static void gfx_ctx_vivante_swap_buffers(void *data, void *data2)
+static void gfx_ctx_vivante_swap_buffers(void *data)
 {
+#ifdef HAVE_EGL
    vivante_ctx_data_t *viv = (vivante_ctx_data_t*)data;
-
-#ifdef HAVE_EGL
    egl_swap_buffers(&viv->egl);
-#endif
-}
-
-static gfx_ctx_proc_t gfx_ctx_vivante_get_proc_address(const char *symbol)
-{
-#ifdef HAVE_EGL
-   return egl_get_proc_address(symbol);
-#else
-   return NULL;
 #endif
 }
 
 static void gfx_ctx_vivante_bind_hw_render(void *data, bool enable)
 {
-   vivante_ctx_data_t *viv = (vivante_ctx_data_t*)data;
-
 #ifdef HAVE_EGL
+   vivante_ctx_data_t *viv = (vivante_ctx_data_t*)data;
    egl_bind_hw_render(&viv->egl, enable);
 #endif
 }
@@ -265,11 +223,6 @@ static uint32_t gfx_ctx_vivante_get_flags(void *data)
    BIT32_SET(flags, GFX_CTX_FLAGS_SHADERS_GLSL);
 
    return flags;
-}
-
-static void gfx_ctx_vivante_set_flags(void *data, uint32_t flags)
-{
-   (void)data;
 }
 
 const gfx_ctx_driver_t gfx_ctx_vivante_fbdev = {
@@ -294,11 +247,15 @@ const gfx_ctx_driver_t gfx_ctx_vivante_fbdev = {
    false, /* has_windowed */
    gfx_ctx_vivante_swap_buffers,
    gfx_ctx_vivante_input_driver,
-   gfx_ctx_vivante_get_proc_address,
+#ifdef HAVE_EGL
+   egl_get_proc_address,
+#else
+   NULL,
+#endif
    NULL,
    NULL,
    NULL,
-   "vivante-fbdev",
+   "fbdev_vivante",
    gfx_ctx_vivante_get_flags,
    gfx_ctx_vivante_set_flags,
    gfx_ctx_vivante_bind_hw_render,

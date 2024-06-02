@@ -16,8 +16,9 @@
 
 #include "wiiu/input.h"
 
-enum wiiu_pad_axes {
-  WIIU_AXIS_LEFT_ANALOG_X,
+enum wiiu_pad_axes
+{
+  WIIU_AXIS_LEFT_ANALOG_X = 0,
   WIIU_AXIS_LEFT_ANALOG_Y,
   WIIU_AXIS_RIGHT_ANALOG_X,
   WIIU_AXIS_RIGHT_ANALOG_Y,
@@ -28,9 +29,9 @@ enum wiiu_pad_axes {
 
 static int16_t clamp_axis(int16_t value, bool is_negative)
 {
-   if(is_negative && value > 0)
+   if (is_negative && value > 0)
       return 0;
-   if(!is_negative && value < 0)
+   if (!is_negative && value < 0)
       return 0;
 
    return value;
@@ -41,7 +42,7 @@ static int16_t wiiu_pad_get_axis_value(int32_t axis,
 {
    int16_t value = 0;
 
-   switch(axis)
+   switch (axis)
    {
       case WIIU_AXIS_LEFT_ANALOG_X:
          value = state[RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_X];
@@ -70,12 +71,12 @@ void wiiu_pad_set_axis_value(
       int16_t right_x, int16_t right_y,
       int16_t touch_x, int16_t touch_y)
 {
-  state[RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_X] = left_x;
-  state[RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_Y] = left_y;
+  state[RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_X]  = left_x;
+  state[RETRO_DEVICE_INDEX_ANALOG_LEFT][RETRO_DEVICE_ID_ANALOG_Y]  = left_y;
   state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_X] = right_x;
   state[RETRO_DEVICE_INDEX_ANALOG_RIGHT][RETRO_DEVICE_ID_ANALOG_Y] = right_y;
-  state[WIIU_DEVICE_INDEX_TOUCHPAD][RETRO_DEVICE_ID_ANALOG_X] = touch_x;
-  state[WIIU_DEVICE_INDEX_TOUCHPAD][RETRO_DEVICE_ID_ANALOG_Y] = touch_y;
+  state[WIIU_DEVICE_INDEX_TOUCHPAD][RETRO_DEVICE_ID_ANALOG_X]      = touch_x;
+  state[WIIU_DEVICE_INDEX_TOUCHPAD][RETRO_DEVICE_ID_ANALOG_Y]      = touch_y;
 }
 
 wiiu_pad_functions_t pad_functions = {

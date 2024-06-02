@@ -1,30 +1,31 @@
-#include "discord_rpc.h"
-#include "discord_register.h"
 #include <stdio.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <boolean.h>
+#include <file/file_path.h>
+#include <compat/strl.h>
 
-static bool Mkdir(const char* path)
+#include <discord_rpc.h>
+
+int get_process_id(void)
 {
-   int result = mkdir(path, 0755);
-   if (result == 0)
-      return true;
-   if (errno == EEXIST)
-      return true;
-   return false;
+    return getpid();
 }
 
 /* we want to register games so we can run them from 
  * Discord client as discord-<appid>:// */
-void Discord_Register(const char* applicationId, const char* command)
+void Discord_Register(const char *applicationId, const char *command)
 {
+   size_t _len;
    FILE* fp;
    int fileLen;
    char xdgMimeCommand[1024];
@@ -61,21 +62,39 @@ void Discord_Register(const char* applicationId, const char* command)
          return;
    }
 
-   snprintf(desktopFilename, sizeof(desktopFilename), "/discord-%s.desktop", applicationId);
+   _len  = strlcpy(desktopFilename,
+         "/discord-",
+         sizeof(desktopFilename));
+   _len += strlcpy(desktopFilename + _len,
+         applicationId,
+         sizeof(desktopFilename)   - _len);
+   _len += strlcpy(desktopFilename + _len,
+         ".desktop",
+         sizeof(desktopFilename)   - _len);
 
-   snprintf(desktopFilePath, sizeof(desktopFilePath), "%s/.local", home);
-   if (!Mkdir(desktopFilePath))
+   _len  = strlcpy(desktopFilePath,
+         home,
+         sizeof(desktopFilePath));
+   _len += strlcpy(desktopFilePath + _len,
+         "/.local",
+         sizeof(desktopFilePath)   - _len);
+   if (!path_mkdir(desktopFilePath))
       return;
-   strcat(desktopFilePath, "/share");
-   if (!Mkdir(desktopFilePath))
+   _len += strlcpy(desktopFilePath + _len,
+         "/share",
+         sizeof(desktopFilePath)   - _len);
+   if (!path_mkdir(desktopFilePath))
       return;
-   strcat(desktopFilePath, "/applications");
-   if (!Mkdir(desktopFilePath))
+   _len += strlcpy(desktopFilePath + _len,
+         "/applications",
+         sizeof(desktopFilePath)   - _len);
+   if (!path_mkdir(desktopFilePath))
       return;
-   strcat(desktopFilePath, desktopFilename);
+   _len += strlcpy(desktopFilePath + _len,
+         desktopFilename,
+         sizeof(desktopFilePath)   - _len);
 
-   fp = fopen(desktopFilePath, "w");
-   if (!fp)
+   if (!(fp = fopen(desktopFilePath, "w")))
       return;
 
    fwrite(desktopFile, 1, fileLen, fp);
@@ -90,11 +109,10 @@ void Discord_Register(const char* applicationId, const char* command)
       fprintf(stderr, "Failed to register mime handler\n");
 }
 
-void Discord_RegisterSteamGame(
-      const char* applicationId,
-      const char* steamId)
+void Discord_RegisterSteamGame(const char *applicationId, const char *steamId)
 {
    char command[256];
-   sprintf(command, "xdg-open steam://rungameid/%s", steamId);
+   size_t _len = strlcpy(command, "xdg-open steam://rungameid/", sizeof(command));
+   strlcpy(command + _len, steamId, sizeof(command) - _len);
    Discord_Register(applicationId, command);
 }

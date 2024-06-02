@@ -18,7 +18,6 @@
 #include <unistd.h>
 #include <limits.h>
 #include <stdio.h>
-#include <errno.h>
 
 #include <linux/parport.h>
 #include <linux/ppdev.h>
@@ -40,14 +39,15 @@
 
 struct parport_joypad
 {
+   char *ident;
    int fd;
    uint32_t buttons;
-   bool button_enable[PARPORT_NUM_BUTTONS];
    char saved_data;
    char saved_control;
-   char *ident;
+   bool button_enable[PARPORT_NUM_BUTTONS];
 };
 
+/* TODO/FIXME - static global */
 static struct parport_joypad parport_pads[MAX_USERS];
 
 static void parport_poll_pad(struct parport_joypad *pad)
@@ -116,7 +116,8 @@ static void parport_poll_pad(struct parport_joypad *pad)
       BIT32_SET(pad->buttons, 12);
 }
 
-static bool parport_joypad_init_pad(const char *path, struct parport_joypad *pad)
+static bool parport_joypad_init_pad(
+      const char *path, struct parport_joypad *pad)
 {
    int i;
    char data;
@@ -134,33 +135,26 @@ static bool parport_joypad_init_pad(const char *path, struct parport_joypad *pad
    pad->fd     = open(path, O_RDWR | O_NONBLOCK);
    *pad->ident = '\0';
 
+   /* Found parallel port? */
    if (pad->fd >= 0)
    {
-      RARCH_LOG("[Joypad]: Found parallel port: %s\n", path);
-
-      /* Parport driver does not log failures with RARCH_ERR because they could be
+      /* Parport driver does not log failures with 
+       * RARCH_ERR because they could be
        * a normal result of connected non-joypad devices. */
-      if (ioctl(pad->fd, PPCLAIM) < 0)
-      {
-         RARCH_WARN("[Joypad]: Failed to claim %s\n", path);
-         goto error;
-      }
-      if (ioctl(pad->fd, PPSETMODE, &mode) < 0)
-      {
-         RARCH_WARN("[Joypad]: Failed to set byte mode on %s\n", path);
-         goto error;
-      }
-      if (ioctl(pad->fd, PPDATADIR, &datadir) < 0)
-      {
-         RARCH_WARN("[Joypad]: Failed to set data direction to input on %s\n", path);
-         goto error;
-      }
 
-      if (ioctl(pad->fd, PPRDATA, &data) < 0)
-      {
-         RARCH_WARN("[Joypad]: Failed to save original data register on %s\n", path);
+      /* Failed to claim? */
+      if (ioctl(pad->fd, PPCLAIM) < 0)
          goto error;
-      }
+      /* Failed to set byte mode? */
+      if (ioctl(pad->fd, PPSETMODE, &mode) < 0)
+         goto error;
+      /* Failed to set data direction to input */
+      if (ioctl(pad->fd, PPDATADIR, &datadir) < 0)
+         goto error;
+      /* Failed to save original data register */
+      if (ioctl(pad->fd, PPRDATA, &data) < 0)
+         goto error;
+
       pad->saved_data = data;
 
       if (ioctl(pad->fd, PPRCONTROL, &data) == 0)
@@ -168,17 +162,19 @@ static bool parport_joypad_init_pad(const char *path, struct parport_joypad *pad
          pad->saved_control = data;
          /* Clear strobe bit to set strobe high for pullup +V */
          /* Clear control bit 4 to disable interrupts */
-         frob.mask = PARPORT_CONTROL_STROBE | (UINT8_C(1 << 4));
-         frob.val = 0;
+         frob.mask          = PARPORT_CONTROL_STROBE | (UINT8_C(1 << 4));
+         frob.val           = 0;
          if (ioctl(pad->fd, PPFCONTROL, &frob) == 0)
             set_control = true;
       }
       else
       {
          data = pad->saved_data;
+#if 0
          if (ioctl(pad->fd, PPWDATA, &data) < 0)
             RARCH_WARN("[Joypad]: Failed to restore original data register on %s\n", path);
          RARCH_WARN("[Joypad]: Failed to save original control register on %s\n", path);
+#endif
          goto error;
       }
 
@@ -188,7 +184,7 @@ static bool parport_joypad_init_pad(const char *path, struct parport_joypad *pad
       if (!set_control)
          RARCH_WARN("[Joypad]: Failed to clear nStrobe and nIRQ bits on %s\n", path);
 
-      strlcpy(pad->ident, path, sizeof(input_device_names[0]));
+      strlcpy(pad->ident, path, input_config_get_device_name_size(0));
 
       for (i = 0; i < PARPORT_NUM_BUTTONS; i++)
          pad->button_enable[i] = true;
@@ -200,7 +196,6 @@ error:
       return false;
    }
 
-   RARCH_WARN("[Joypad]: Failed to open parallel port %s (error: %s).\n", path, strerror(errno));
    return false;
 }
 
@@ -233,27 +228,28 @@ static void parport_free_pad(struct parport_joypad *pad)
    pad->fd = -1;
 }
 
-static bool parport_joypad_init(void *data)
+static void *parport_joypad_init(void *data)
 {
-   unsigned i, j;
+   size_t i;
+   unsigned j;
+   char path[PATH_MAX_LENGTH];
    bool found_enabled_button             = false;
    bool found_disabled_button            = false;
    char buf[PARPORT_NUM_BUTTONS * 3 + 1] = {0};
    char pin[3 + 1]                       = {0};
-
-   (void)data;
+   size_t _len                           = 
+      strlcpy(path, "/dev/parport", sizeof(path));
 
    memset(buf, 0, PARPORT_NUM_BUTTONS * 3 + 1);
 
    for (i = 0; i < MAX_USERS; i++)
    {
-      char path[PATH_MAX_LENGTH] = {0};
       struct parport_joypad *pad = &parport_pads[i];
 
       pad->fd    = -1;
-      pad->ident = input_device_names[i];
+      pad->ident = input_config_get_device_name_ptr(i);
 
-      snprintf(path, sizeof(path), "/dev/parport%u", i);
+      snprintf(path + _len, sizeof(path) - _len, "%u", (uint32_t)i);
 
       if (parport_joypad_init_pad(path, pad))
       {
@@ -264,7 +260,7 @@ static bool parport_joypad_init(void *data)
           * and disable any low pins.
           */
          parport_poll_pad(pad);
-         found_enabled_button = false;
+         found_enabled_button  = false;
          found_disabled_button = false;
 
          for (j = 0; j < PARPORT_NUM_BUTTONS; j++)
@@ -290,17 +286,19 @@ static bool parport_joypad_init(void *data)
                {
                   if (!pad->button_enable[j])
                   {
-                     snprintf(pin, sizeof(pin), "%d ", j);
-                     strlcat(buf, pin, sizeof(buf));
+                     size_t _len = snprintf(pin, sizeof(pin), "%d ", j);
+                     strlcpy(buf + _len, pin, sizeof(buf) - _len);
                   }
                }
-               RARCH_WARN("[Joypad]: Pin(s) %son %s were low on init, assuming not connected\n", \
+               RARCH_WARN("[Joypad]: Pin(s) %son %s were low"
+                     " on init, assuming not connected\n", \
                      buf, path);
             }
          }
          else
          {
-            RARCH_WARN("[Joypad]: All pins low on %s, assuming nothing connected\n", path);
+            RARCH_WARN("[Joypad]: All pins low on %s, assuming"
+                  " nothing connected\n", path);
             parport_free_pad(pad);
          }
       }
@@ -315,7 +313,7 @@ static bool parport_joypad_init(void *data)
             );
    }
 
-   return true;
+   return (void*)-1;
 }
 
 static void parport_joypad_destroy(void)
@@ -334,10 +332,47 @@ static void parport_joypad_destroy(void)
       parport_pads[i].fd = -1;
 }
 
-static bool parport_joypad_button(unsigned port, uint16_t joykey)
+static int32_t parport_joypad_button(unsigned port, uint16_t joykey)
 {
-   const struct parport_joypad *pad = (const struct parport_joypad*)&parport_pads[port];
-   return joykey < PARPORT_NUM_BUTTONS && BIT32_GET(pad->buttons, joykey);
+   const struct parport_joypad     *pad = (const struct parport_joypad*)
+      &parport_pads[port];
+   if (port >= DEFAULT_MAX_PADS)
+      return 0;
+   if (joykey < PARPORT_NUM_BUTTONS)
+      return BIT32_GET(pad->buttons, joykey);
+   return 0;
+}
+
+/* TODO/FIXME - Parport does not support analog sticks */
+static int16_t parport_joypad_axis(unsigned port, uint32_t joyaxis) { return 0; }
+
+static int16_t parport_joypad_state(
+      rarch_joypad_info_t *joypad_info,
+      const struct retro_keybind *binds,
+      unsigned port)
+{
+   unsigned i;
+   int16_t ret                          = 0;
+   uint16_t port_idx                    = joypad_info->joy_idx;
+   const struct parport_joypad     *pad = (const struct parport_joypad*)
+      &parport_pads[port_idx];
+
+   if (port_idx >= DEFAULT_MAX_PADS)
+      return 0;
+
+   for (i = 0; i < RARCH_FIRST_CUSTOM_BIND; i++)
+   {
+      /* Auto-binds are per joypad, not per user. */
+      const uint64_t joykey  = (binds[i].joykey != NO_BTN)
+         ? binds[i].joykey  : joypad_info->auto_binds[i].joykey;
+      if (
+               (uint16_t)joykey != NO_BTN 
+               && (joykey < PARPORT_NUM_BUTTONS)
+               && (BIT32_GET(pad->buttons, (uint16_t)joykey)))
+         ret |= ( 1 << i);
+   }
+
+   return ret;
 }
 
 static void parport_joypad_get_buttons(unsigned port, input_bits_t *state)
@@ -351,12 +386,6 @@ static void parport_joypad_get_buttons(unsigned port, input_bits_t *state)
 	}
    else
 		BIT256_CLEAR_ALL_PTR(state);
-}
-
-static int16_t parport_joypad_axis(unsigned port, uint32_t joyaxis)
-{
-   /* Parport does not support analog sticks */
-   return 0;
 }
 
 static bool parport_joypad_query_pad(unsigned pad)
@@ -377,9 +406,11 @@ input_device_driver_t parport_joypad = {
    parport_joypad_query_pad,
    parport_joypad_destroy,
    parport_joypad_button,
+   parport_joypad_state,
    parport_joypad_get_buttons,
    parport_joypad_axis,
    parport_joypad_poll,
+   NULL,
    NULL,
    parport_joypad_name,
    "parport",

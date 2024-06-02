@@ -1,6 +1,8 @@
 TARGET = retroarch.exe
 
+HAVE_SCREENSHOTS = 1
 HAVE_AUDIOMIXER = 1
+HAVE_RWAV = 1
 HAVE_DINPUT = 1
 HAVE_XAUDIO = 1
 HAVE_DSOUND = 1
@@ -9,16 +11,23 @@ HAVE_OPENGL = 1
 HAVE_DYLIB = 1
 HAVE_D3D9 = 1
 HAVE_NETWORKING = 1
+HAVE_IFINFO = 1
 HAVE_NETPLAYDISCOVERY = 1
 HAVE_STDIN_CMD = 1
 HAVE_COMMAND = 1
 HAVE_THREADS = 1
 HAVE_MENU = 1
+HAVE_CONFIGFILE = 1
+HAVE_PATCH      = 1
+HAVE_REWIND     = 1
+HAVE_CHEATS     = 1
 HAVE_RGUI = 1
 HAVE_MATERIALUI = 1
+HAVE_DSP_FILTER = 1
+HAVE_VIDEO_FILTER = 1
 HAVE_7ZIP = 1
-HAVE_PYTHON = 0
 DYNAMIC = 1
+HAVE_CORE_INFO_CACHE = 1
 
 HAVE_XINPUT = 1
 HAVE_WINMM = 1
@@ -26,7 +35,6 @@ HAVE_WINMM = 1
 HAVE_SDL      := 0
 HAVE_SDL2     := 0
 HAVE_RSOUND   := 0
-HAVE_PYTHON   := 0
 
 HAVE_STB_FONT := 1
 HAVE_FREETYPE := 1
@@ -75,11 +83,6 @@ RSOUND_CFLAGS    := -DHAVE_RSOUND
 RSOUND_LIBS      := -lrsound
 endif
 
-ifeq ($(HAVE_PYTHON), 1)
-PYTHON_LIBS      := -lpython32
-PYTHON_CFLAGS    := -DHAVE_PYTHON -Ipython
-endif
-
 ifeq ($(HAVE_FFMPEG), 1)
 AVCODEC_LIBS     := -lavcodec
 AVUTIL_LIBS      := -lavutil
@@ -95,8 +98,7 @@ OS               := Win32
 OBJ              :=
 LIBS             := -lm
 DEFINES			  :=
-DEFINES          += -I. -Ilibretro-common/include -Ilibretro-common/include/compat/zlib -DRARCH_INTERNAL -DHAVE_OVERLAY
-#DEFINES			  += -DHAVE_VIDEO_LAYOUT
+DEFINES          += -I. -Ilibretro-common/include -Ilibretro-common/include/compat/zlib -DRARCH_INTERNAL -DHAVE_SCREENSHOTS -DHAVE_OVERLAY
 LDFLAGS          := -L. -static-libgcc
 
 include Makefile.common
@@ -159,13 +161,6 @@ $(OBJDIR)/%.o: %.c
 	@$(if $(Q), $(shell echo echo CC $<),)
 	$(Q)$(CC) $(CFLAGS) $(DEFINES) -MMD -c -o $@ $<
 
-.FORCE:
-
-$(OBJDIR)/git_version.o: git_version.c .FORCE
-	@-mkdir -p $(dir $@) || mkdir $(subst /,\,$(dir $@)) || echo .
-	@$(if $(Q), $(shell echo echo CC $<),)
-	$(Q)$(CC) $(CFLAGS) $(DEFINES) -MMD -c -o $@ $<
-
 $(OBJDIR)/%.o: %.cpp | $(dir $@)
 	@-mkdir -p $(dir $@) || mkdir $(subst /,\,$(dir $@)) || echo .
 	@$(if $(Q), $(shell echo echo CXX $<),)
@@ -174,7 +169,7 @@ $(OBJDIR)/%.o: %.cpp | $(dir $@)
 $(OBJDIR)/%.o: %.rc $(HEADERS)
 	@-mkdir -p $(dir $@) || mkdir $(subst /,\,$(dir $@)) || echo .
 	@$(if $(Q), $(shell echo echo WINDRES $<),)
-	$(Q)$(WINDRES) -o $@ $<
+	$(Q)$(WINDRES) $(DEFINES) -o $@ $<
 
 clean:
 	rm -rf $(OBJDIR)

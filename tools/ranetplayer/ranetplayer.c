@@ -135,7 +135,7 @@ uint32_t frame_offset_cmd(bool ntoh)
 /* Send a bit of our input */
 bool send_input(uint32_t cur_frame)
 {
-   while (1)
+   for (;;)
    {
       uint32_t rd_frame = 0;
 
@@ -190,7 +190,7 @@ int main(int argc, char **argv)
       {"ahead",      1, NULL, 'a'}
    };
 
-   while (1)
+   for (;;)
    {
       int c;
 
@@ -271,13 +271,13 @@ int main(int argc, char **argv)
    }
 
    /* Connect to the netplay server */
-   if ((sock = socket_init((void **) &addr, port, host, SOCKET_PROTOCOL_TCP)) < 0)
+   if ((sock = socket_init((void**)&addr, port, host, SOCKET_PROTOCOL_TCP, 0)) < 0)
    {
       perror("socket");
       return 1;
    }
 
-   if (socket_connect(sock, addr, false) < 0)
+   if (socket_connect(sock, addr) < 0)
    {
       perror("connect");
       return 1;
@@ -345,7 +345,7 @@ int main(int argc, char **argv)
    }
 
    /* Now handle netplay commands */
-   while (1)
+   for (;;)
    {
       RECV();
 

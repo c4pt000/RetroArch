@@ -101,28 +101,54 @@ int _gettimeofday_r(struct _reent *ptr,
 int clock_gettime(clockid_t clk_id, struct timespec* tp)
 {
    struct timeval ptimeval = { 0 };
-   int ret = 0;
-   OSTime cosTime;
+   int ret                 = 0;
 
-   if (tp == NULL) {
+   if (tp == NULL)
+   {
       errno = EFAULT;
       return -1;
    }
 
-   switch (clk_id) {
+   switch (clk_id)
+   {
       case CLOCK_REALTIME:
          /* Just wrap gettimeofday. Cheating, I know. */
          ret = _gettimeofday_r(NULL, &ptimeval, NULL);
-         if (ret) return -1;
+         if (ret)
+            return -1;
 
-         tp->tv_sec = ptimeval.tv_sec;
+         tp->tv_sec  = ptimeval.tv_sec;
          tp->tv_nsec = ptimeval.tv_usec * 1000;
-      break;
+         break;
       default:
          errno = EINVAL;
          return -1;
    }
    return 0;
+}
+
+/* Fake sysconf for page size and processor count */
+long sysconf(int name) {
+   switch (name) {
+      case _SC_PAGESIZE:
+      //case _SC_PAGE_SIZE:
+         return 128 * 1024;
+      case _SC_NPROCESSORS_CONF:
+      case _SC_NPROCESSORS_ONLN:
+         return 3;
+      default:
+         errno = EINVAL;
+         return -1;
+   }
+}
+
+/**
+ * Intended to replace libgcc's __clear_cache builtin.
+ * For cores that need it, add -D__clear_cache=wiiu_clear_cache to CFLAGS.
+ */
+void wiiu_clear_cache (char *beg, char *end) {
+   DCFlushRange(beg, (uint32_t)(end - beg));
+   ICInvalidateRange(beg, (uint32_t)(end - beg));
 }
 
 /**
@@ -144,12 +170,15 @@ static struct ifaddrs *buildEmptyIfa(void)
    if (result)
    {
       memset(result, 0, sizeof(struct ifaddrs));
-      result->ifa_name = strdup(wiiu_iface_name);
-      result->ifa_addr = (struct sockaddr *)malloc(sizeof(struct sockaddr_in));
+      result->ifa_name    = strdup(wiiu_iface_name);
+      result->ifa_addr    = (struct sockaddr *)malloc(sizeof(struct sockaddr_in));
       result->ifa_netmask = (struct sockaddr *)malloc(sizeof(struct sockaddr_in));
       result->ifa_dstaddr = (struct sockaddr *)malloc(sizeof(struct sockaddr_in));
 
-      if (!result->ifa_name || !result->ifa_addr || !result->ifa_netmask || !result->ifa_dstaddr)
+      if (  !result->ifa_name    || 
+            !result->ifa_addr    || 
+            !result->ifa_netmask || 
+            !result->ifa_dstaddr)
          goto error;
 
       memset(result->ifa_addr, 0, sizeof(struct sockaddr_in));

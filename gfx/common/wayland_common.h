@@ -13,54 +13,86 @@
  *  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef WAYLAND_COMMON_H__
-#define WAYLAND_COMMON_H__
+#pragma once
 
-#include <stdint.h>
-#include <boolean.h>
+#ifdef HAVE_LIBDECOR_H
+#include <libdecor.h>
+#endif
 
-#include <linux/input.h>
-#include <wayland-client.h>
-#include <wayland-cursor.h>
+#include "../../input/common/wayland_common.h"
 
-#include "../../input/input_driver.h"
+/* Icon is 16x15 scaled by 16 */
+#define SPLASH_WINDOW_WIDTH 240
+#define SPLASH_WINDOW_HEIGHT 256
 
-#define UDEV_KEY_MAX			0x2ff
-#define UDEV_MAX_KEYS (UDEV_KEY_MAX + 7) / 8
+#define WAYLAND_APP_ID "org.libretro.RetroArch"
 
-#define MAX_TOUCHES             16
-
-typedef struct
+typedef struct toplevel_listener
 {
-   bool active;
-   int16_t x;
-   int16_t y;
-} wayland_touch_data_t;
+#ifdef HAVE_LIBDECOR_H
+   struct libdecor_frame_interface libdecor_frame_interface;
+#endif
+   struct xdg_toplevel_listener xdg_toplevel_listener;
+} toplevel_listener_t;
 
-typedef struct input_ctx_wayland_data
+typedef struct shm_buffer
 {
-   /* Wayland uses Linux keysyms. */
-   uint8_t key_state[UDEV_MAX_KEYS];
-   bool keyboard_focus;
+   struct wl_buffer *wl_buffer;
+   void *data;
+   size_t data_size;
+} shm_buffer_t;
 
-   struct
-   {
-      int last_x, last_y;
-      int x, y;
-      int delta_x, delta_y;
-      bool last_valid;
-      bool focus;
-      bool left, right, middle;
-   } mouse;
+void xdg_toplevel_handle_configure_common(gfx_ctx_wayland_data_t *wl, void *toplevel,
+      int32_t width, int32_t height, struct wl_array *states);
 
-   struct wl_display *dpy;
-   int fd;
+void xdg_toplevel_handle_close(void *data,
+      struct xdg_toplevel *xdg_toplevel);
 
-   const input_device_driver_t *joypad;
-   bool blocked;
+#ifdef HAVE_LIBDECOR_H
+void libdecor_frame_handle_configure_common(struct libdecor_frame *frame,
+      struct libdecor_configuration *configuration, gfx_ctx_wayland_data_t *wl);
 
-   wayland_touch_data_t touches[MAX_TOUCHES];
+void libdecor_frame_handle_close(struct libdecor_frame *frame,
+      void *data);
 
-} input_ctx_wayland_data_t;
+void libdecor_frame_handle_commit(struct libdecor_frame *frame,
+      void *data);
+#endif
 
+void gfx_ctx_wl_get_video_size_common(void *data, unsigned *width,
+      unsigned *height);
+
+void gfx_ctx_wl_destroy_resources_common(gfx_ctx_wayland_data_t *wl);
+
+void gfx_ctx_wl_update_title_common(void *data);
+
+bool gfx_ctx_wl_get_metrics_common(void *data,
+      enum display_metric_types type, float *value);
+
+bool gfx_ctx_wl_init_common(
+      const toplevel_listener_t *toplevel_listener,
+      gfx_ctx_wayland_data_t **wl);
+
+bool gfx_ctx_wl_set_video_mode_common_size(gfx_ctx_wayland_data_t *wl,
+      unsigned width, unsigned height, bool fullscreen);
+
+bool gfx_ctx_wl_set_video_mode_common_fullscreen(gfx_ctx_wayland_data_t *wl,
+      bool fullscreen);
+
+bool gfx_ctx_wl_suppress_screensaver(void *data, bool state);
+
+bool gfx_ctx_wl_set_video_mode_common(gfx_ctx_wayland_data_t *wl,
+      unsigned width, unsigned height,
+      bool fullscreen);
+
+float gfx_ctx_wl_get_refresh_rate(void *data);
+
+bool gfx_ctx_wl_has_focus(void *data);
+
+void gfx_ctx_wl_check_window_common(gfx_ctx_wayland_data_t *wl,
+      void (*get_video_size)(void*, unsigned*, unsigned*), bool *quit,
+      bool *resize, unsigned *width, unsigned *height);
+
+#ifdef HAVE_LIBDECOR_H
+extern const struct libdecor_interface libdecor_interface;
 #endif

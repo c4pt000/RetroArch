@@ -20,7 +20,6 @@
 #include <malloc.h>
 #endif
 #include <string.h>
-#include <assert.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -37,14 +36,15 @@
 
 #include <memmap.h>
 
-#include <retro_assert.h>
 #include <retro_miscellaneous.h>
 #include <gfx/scaler/scaler.h>
 #include <gfx/video_frame.h>
 #include <file/file_path.h>
+#include <libretro.h>
 
 #include <compat/strl.h>
 
+#include "../camera_driver.h"
 #include "../../retroarch.h"
 #include "../../verbosity.h"
 
@@ -378,8 +378,6 @@ static bool preprocess_image(void *data)
       return false;
    }
 
-   retro_assert(buf.index < v4l->n_buffers);
-
    ctx = &v4l->scaler;
 
    scaler_ctx_scale_direct(ctx, v4l->buffer_output, (const uint8_t*)v4l->buffers[buf.index].start);
@@ -402,7 +400,7 @@ static bool v4l_poll(void *data,
 
    if (preprocess_image(data))
    {
-      if (frame_raw_cb != NULL)
+      if (frame_raw_cb)
          frame_raw_cb(v4l->buffer_output, v4l->width,
                v4l->height, v4l->width * 4);
       return true;

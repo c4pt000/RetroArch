@@ -1,3 +1,6 @@
+PLATFORM_NAME="$(uname -s)"
+ARCHITECTURE_NAME="$(uname -m)"
+
 if [ -n "${CROSS_COMPILE:=}" ]; then
 	case "$CROSS_COMPILE" in
 		*'-mingw32'*) OS='Win32';;
@@ -7,7 +10,7 @@ if [ -n "${CROSS_COMPILE:=}" ]; then
 fi
 
 if [ -z "$CROSS_COMPILE" ] || [ -z "$OS" ]; then
-	case "$(uname)" in
+	case "$PLATFORM_NAME" in
 		'Linux') OS='Linux';;
 		*'BSD') OS='BSD';;
 		'Darwin') OS='Darwin';;

@@ -29,9 +29,7 @@
 #include <wiiu/vpad.h>
 #include <wiiu/kpad.h>
 #include <wiiu/pad_strings.h>
-#include "hid.h"
 
-#include "../../common/hid/hid_device_driver.h"
 #include "../../connect/joypad_connection.h"
 #include "../../../retroarch.h"
 #include "../../../verbosity.h"
@@ -51,7 +49,7 @@
 
 #define WIIU_DEVICE_INDEX_TOUCHPAD 2
 
-#define PAD_GAMEPAD 0
+#define WIIU_GAMEPAD_CHANNELS 2
 #define WIIU_WIIMOTE_CHANNELS 4
 
 #define WIIU_ANALOG_FACTOR 0x7ff0
@@ -64,5 +62,51 @@ struct _wiiu_pad_functions {
    void (*read_axis_data)(uint32_t axis, axis_data *data);
    void (*connect)(unsigned pad, input_device_driver_t *driver);
 };
+
+typedef struct _wiimote_state {
+   uint64_t button_state;
+   int16_t  analog_state[3][2];
+   uint8_t  type;
+} wiimote_state;
+
+typedef struct _drc_state
+{
+   uint64_t button_state;
+   int16_t  analog_state[3][2];
+} drc_state;
+
+typedef struct wiiu_kpad {
+   bool ready;
+   int channel_slot_map[WIIU_WIIMOTE_CHANNELS];
+   int poll_failures[WIIU_WIIMOTE_CHANNELS];
+   wiimote_state wiimotes[WIIU_WIIMOTE_CHANNELS];
+} wiiu_kpad_t;
+
+typedef struct wiiu_wpad {
+   drc_state pads[WIIU_GAMEPAD_CHANNELS];
+   int channel_slot_map[WIIU_GAMEPAD_CHANNELS];
+   bool ready;
+} wiiu_wpad_t;
+
+typedef struct wiiu_hidpad {
+   bool ready;
+} wiiu_hidpad_t;
+
+typedef struct wiiu_joypad {
+   joypad_connection_t pads[MAX_USERS+1];
+   int max_slot;
+
+   wiiu_kpad_t kpad;
+   wiiu_wpad_t wpad;
+   wiiu_hidpad_t hid;
+} wiiu_joypad_t;
+
+extern wiiu_joypad_t joypad_state;
+extern wiiu_pad_functions_t pad_functions;
+extern input_device_driver_t wiiu_joypad;
+extern input_device_driver_t wpad_driver;
+extern input_device_driver_t kpad_driver;
+extern input_device_driver_t hidpad_driver;
+extern hid_driver_t wiiu_hid;
 
 #endif /* __WIIU_INPUT__H */

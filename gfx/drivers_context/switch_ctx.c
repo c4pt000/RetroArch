@@ -24,12 +24,10 @@
 
 #include <switch.h>
 
-#include "../common/switch_common.h"
+#include "../common/switch_defines.h"
 #include "../../frontend/frontend_driver.h"
 
-static enum gfx_ctx_api ctx_nx_api = GFX_CTX_OPENGL_API;
-switch_ctx_data_t *nx_ctx_ptr = NULL;
-
+/* TODO/FIXME - global referenced */
 extern bool platform_switch_has_focus;
 
 void switch_ctx_destroy(void *data)
@@ -47,25 +45,23 @@ void switch_ctx_destroy(void *data)
 }
 
 static void switch_ctx_get_video_size(void *data,
-                                      unsigned *width, unsigned *height)
+      unsigned *width, unsigned *height)
 {
-   switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
-
    switch (appletGetOperationMode())
-      {
-         default:
-         case AppletOperationMode_Handheld:
-            *width = 1280;
-            *height = 720;
-            break;
-         case AppletOperationMode_Docked:
-            *width = 1920;
-            *height = 1080;
-            break;
-      }
+   {
+      default:
+      case AppletOperationMode_Handheld:
+         *width  = 1280;
+         *height = 720;
+         break;
+      case AppletOperationMode_Console:
+         *width  = 1920;
+         *height = 1080;
+         break;
+   }
 }
 
-static void *switch_ctx_init(video_frame_info_t *video_info, void *video_driver)
+static void *switch_ctx_init(void *video_driver)
 {
 #ifdef HAVE_EGL
     EGLint n;
@@ -83,8 +79,6 @@ static void *switch_ctx_init(video_frame_info_t *video_info, void *video_driver)
     if (!ctx_nx)
         return NULL;
 
-    nx_ctx_ptr = ctx_nx;
-
     /* Comment below to enable error checking */
     setenv("MESA_NO_ERROR", "1", 1);
 
@@ -100,9 +94,9 @@ static void *switch_ctx_init(video_frame_info_t *video_info, void *video_driver)
     setenv("NV50_PROG_CHIPSET", "0x120", 1);
 #endif
 
-    // Needs to be here
-   ctx_nx->win = nwindowGetDefault();
-   nwindowSetDimensions(ctx_nx->win, 1920, 1080);
+    /* Needs to be here */
+    ctx_nx->win = nwindowGetDefault();
+    nwindowSetDimensions(ctx_nx->win, 1920, 1080);
 
 #ifdef HAVE_EGL
     if (!egl_init_context(&ctx_nx->egl, EGL_NONE, EGL_DEFAULT_DISPLAY,
@@ -116,13 +110,12 @@ static void *switch_ctx_init(video_frame_info_t *video_info, void *video_driver)
     return ctx_nx;
 
 error:
-    printf("[NXGL]: EGL error: %d.\n", eglGetError());
     switch_ctx_destroy(video_driver);
     return NULL;
 }
 
 static void switch_ctx_check_window(void *data, bool *quit,
-                                    bool *resize, unsigned *width, unsigned *height, bool is_shutdown)
+      bool *resize, unsigned *width, unsigned *height)
 {
     unsigned new_width, new_height;
 
@@ -142,7 +135,6 @@ static void switch_ctx_check_window(void *data, bool *quit,
         ctx_nx->resize = true;
 
         *resize = true;
-        printf("[NXGL]: Resizing to %dx%d\n", *width, *height);
         nwindowSetCrop(ctx_nx->win, 0, 1080 - ctx_nx->height, ctx_nx->width, 1080);
     }
 
@@ -150,9 +142,8 @@ static void switch_ctx_check_window(void *data, bool *quit,
 }
 
 static bool switch_ctx_set_video_mode(void *data,
-                                      video_frame_info_t *video_info,
-                                      unsigned width, unsigned height,
-                                      bool fullscreen)
+      unsigned width, unsigned height,
+      bool fullscreen)
 {
     /* Create an EGL rendering context */
     static const EGLint contextAttributeList[] =
@@ -187,9 +178,7 @@ static bool switch_ctx_set_video_mode(void *data,
     return true;
 
 error:
-    printf("[NXGL]: EGL error: %d.\n", eglGetError());
     switch_ctx_destroy(data);
-
     return false;
 }
 
@@ -201,75 +190,47 @@ static void switch_ctx_input_driver(void *data,
     *input_data = NULL;
 }
 
-static enum gfx_ctx_api switch_ctx_get_api(void *data)
-{
-    return ctx_nx_api;
-}
+static enum gfx_ctx_api switch_ctx_get_api(void *data) { return GFX_CTX_OPENGL_API; }
 
 static bool switch_ctx_bind_api(void *data,
-                                enum gfx_ctx_api api, unsigned major, unsigned minor)
+      enum gfx_ctx_api api, unsigned major, unsigned minor)
 {
-    (void)data;
-    ctx_nx_api = api;
-
     if (api == GFX_CTX_OPENGL_API)
-        if (eglBindAPI(EGL_OPENGL_API) != EGL_FALSE)
+        if (egl_bind_api(EGL_OPENGL_API))
             return true;
-
     return false;
 }
 
-static bool switch_ctx_has_focus(void *data)
-{
-    (void)data;
-    return platform_switch_has_focus;
-}
+static bool switch_ctx_has_focus(void *data) { return platform_switch_has_focus; }
+static bool switch_ctx_suppress_screensaver(void *data, bool enable) { return false; }
 
-static bool switch_ctx_suppress_screensaver(void *data, bool enable)
+static void switch_ctx_set_swap_interval(void *data, int swap_interval)
 {
-    (void)data;
-    (void)enable;
-    return false;
-}
-
-static void switch_ctx_set_swap_interval(void *data,
-                                         int swap_interval)
-{
-    switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
-
 #ifdef HAVE_EGL
+    switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
     egl_set_swap_interval(&ctx_nx->egl, swap_interval);
 #endif
 }
 
-static void switch_ctx_swap_buffers(void *data, void *data2)
+static void switch_ctx_swap_buffers(void *data)
 {
-    switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
-
 #ifdef HAVE_EGL
+    switch_ctx_data_t *ctx_nx = (switch_ctx_data_t*)data;
     egl_swap_buffers(&ctx_nx->egl);
-#endif
-}
-
-static gfx_ctx_proc_t switch_ctx_get_proc_address(const char *symbol)
-{
-#ifdef HAVE_EGL
-    return egl_get_proc_address(symbol);
 #endif
 }
 
 static void switch_ctx_bind_hw_render(void *data, bool enable)
 {
-    switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
-
 #ifdef HAVE_EGL
+    switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
     egl_bind_hw_render(&ctx_nx->egl, enable);
 #endif
 }
 
 static uint32_t switch_ctx_get_flags(void *data)
 {
-    uint32_t flags = 0;
+   uint32_t flags = 0;
 
    if (string_is_equal(video_driver_get_ident(), "glcore"))
    {
@@ -287,15 +248,11 @@ static uint32_t switch_ctx_get_flags(void *data)
     return flags;
 }
 
-static void switch_ctx_set_flags(void *data, uint32_t flags)
-{
-    (void)data;
-}
+static void switch_ctx_set_flags(void *data, uint32_t flags) { }
 
 static float switch_ctx_get_refresh_rate(void *data)
 {
     switch_ctx_data_t *ctx_nx = (switch_ctx_data_t *)data;
-
     return ctx_nx->refresh_rate;
 }
 
@@ -305,7 +262,42 @@ bool switch_ctx_get_metrics(void *data,
    switch (type)
    {
       case DISPLAY_METRIC_DPI:
-         *value = 236.87; /* FIXME: Don't hardcode this value */
+         /* FIXME: DPI values should be obtained by querying
+          * the hardware - these hard-coded values are a kludge */
+         switch (appletGetOperationMode())
+         {
+            case AppletOperationMode_Console:
+               /* Docked mode
+                * > Resolution:  1920x1080
+                * > Screen Size: 39 inch
+                *   - Have to make an assumption here. We select
+                *     a 'default' screen size of 39 inches which
+                *     corresponds to the optimal diagonal screen
+                *     size for HD television as reported in:
+                *       "HDTV displays: subjective effects of scanning
+                *       standards and domestic picture sizes,"
+                *       N. E. Tanton and M. A. Stone,
+                *       BBC Research Department Report 1989/09,
+                *       January 1989
+                *     This agrees with the median recorded TV
+                *     size in:
+                *       "A Survey of UK Television Viewing Conditions,"
+                *       Katy C. Noland and Louise H. Truong,
+                *       BBC R&D White Paper WHP 287 January 2015
+                * > DPI:         sqrt((1920 * 1920) + (1080 * 1080)) / 39
+                */
+               *value = 56.48480f;
+               break;
+            case AppletOperationMode_Handheld:
+            default:
+               /* Handheld mode
+                * > Resolution:  1280x720
+                * > Screen size: 6.2 inch
+                * > DPI:         sqrt((1280 * 1280) + (720 * 720)) / 6.2
+                */
+               *value = 236.8717f;
+               break;
+         }
          return true;
       default:
          break;
@@ -336,13 +328,18 @@ const gfx_ctx_driver_t switch_ctx = {
     false, /* has_windowed */
     switch_ctx_swap_buffers,
     switch_ctx_input_driver,
-    switch_ctx_get_proc_address,
+#ifdef HAVE_EGL
+    egl_get_proc_address,
+#else
+    NULL,
+#endif
     NULL,
     NULL,
     NULL,
-    "switch",
+    "egl_switch",
     switch_ctx_get_flags,
     switch_ctx_set_flags,
     switch_ctx_bind_hw_render,
     NULL,
-    NULL};
+    NULL
+};

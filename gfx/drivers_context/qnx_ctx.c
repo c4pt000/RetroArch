@@ -26,12 +26,6 @@
 #include "../../config.h"
 #endif
 
-#ifdef HAVE_OPENGLES2
-#include <GLES2/gl2.h>
-#elif HAVE_OPENGLES3
-#include <GLES3/gl3.h>
-#endif
-
 #ifdef HAVE_EGL
 #include <EGL/egl.h>
 #endif
@@ -40,17 +34,10 @@
 #include "../common/egl_common.h"
 #endif
 
-#ifdef HAVE_OPENGLES
-#include "../common/gl_common.h"
-#endif
-
 #include "../../configuration.h"
 #include "../../verbosity.h"
 
 #define WINDOW_BUFFERS 2
-
-screen_context_t screen_ctx;
-screen_window_t screen_win;
 
 typedef struct
 {
@@ -61,7 +48,10 @@ typedef struct
    bool resize;
 } qnx_ctx_data_t;
 
-static enum gfx_ctx_api qnx_api = GFX_CTX_NONE;
+/* TODO/FIXME - globals with public scope */
+screen_context_t screen_ctx;
+screen_window_t screen_win;
+
 
 static void gfx_ctx_qnx_destroy(void *data)
 {
@@ -74,10 +64,15 @@ static void gfx_ctx_qnx_destroy(void *data)
    free(data);
 }
 
-static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver)
+static void *gfx_ctx_qnx_init(void *video_driver)
 {
    EGLint n;
    EGLint major, minor;
+   int usage, format;
+#ifndef HAVE_BB10
+   int angle, size[2];
+   screen_display_mode_t screen_mode;
+#endif
    EGLint context_attributes[] = {
 #ifdef HAVE_OPENGLES2
            EGL_CONTEXT_CLIENT_VERSION, 2,
@@ -87,7 +82,7 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
       EGL_NONE
    };
 
-   const EGLint attribs[] = {
+   const EGLint attribs[]      = {
 #ifdef HAVE_OPENGLES2
       EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
 #elif HAVE_OPENGLES3
@@ -99,8 +94,8 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
       EGL_RED_SIZE, 8,
       EGL_NONE
    };
-
-   qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)calloc(1, sizeof(*qnx));
+   int screen_resolution[2];
+   qnx_ctx_data_t *qnx         = (qnx_ctx_data_t*)calloc(1, sizeof(*qnx));
 
    if (!qnx)
        goto screen_error;
@@ -112,19 +107,16 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
    if (!screen_ctx)
    {
       screen_create_context(&screen_ctx, 0);
-
       if (screen_request_events(screen_ctx) != BPS_SUCCESS)
       {
          RARCH_ERR("screen_request_events failed.\n");
          goto screen_error;
       }
-
       if (navigator_request_events(0) != BPS_SUCCESS)
       {
          RARCH_ERR("navigator_request_events failed.\n");
          goto screen_error;
       }
-
       if (navigator_rotation_lock(false) != BPS_SUCCESS)
       {
          RARCH_ERR("navigator_location_lock failed.\n");
@@ -135,28 +127,21 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
 #ifdef HAVE_EGL
    if (!egl_init_context(&qnx->egl, EGL_NONE, EGL_DEFAULT_DISPLAY, &major, &minor,
             &n, attribs, NULL))
-   {
-      egl_report_error();
       goto error;
-   }
-
    if (!egl_create_context(&qnx->egl, context_attributes))
-   {
-      egl_report_error();
       goto error;
-   }
 #endif
 
-   if(!screen_win)
+   if (!screen_win)
    {
       if (screen_create_window(&screen_win, screen_ctx))
       {
-             RARCH_ERR("screen_create_window failed:.\n");
-	     goto error;
+         RARCH_ERR("screen_create_window failed:.\n");
+         goto error;
       }
    }
 
-   int format = SCREEN_FORMAT_RGBX8888;
+   format = SCREEN_FORMAT_RGBX8888;
    if (screen_set_window_property_iv(screen_win,
             SCREEN_PROPERTY_FORMAT, &format))
    {
@@ -164,7 +149,6 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
       goto error;
    }
 
-   int usage;
 #ifdef HAVE_OPENGLES2
    usage = SCREEN_USAGE_OPENGL_ES2 | SCREEN_USAGE_ROTATION;
 #elif HAVE_OPENGLES3
@@ -184,8 +168,6 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
       goto error;
    }
 
-   int screen_resolution[2];
-
    if (screen_get_display_property_iv(qnx->screen_disp,
             SCREEN_PROPERTY_SIZE, screen_resolution))
    {
@@ -194,11 +176,8 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
    }
 
 #ifndef HAVE_BB10
-   int angle, size[2];
-
    angle = atoi(getenv("ORIENTATION"));
 
-   screen_display_mode_t screen_mode;
    if (screen_get_display_property_pv(qnx->screen_disp,
             SCREEN_PROPERTY_MODE, (void**)&screen_mode))
    {
@@ -217,8 +196,8 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
 
    if ((angle == 0) || (angle == 180))
    {
-      if (((screen_mode.width > screen_mode.height) && (size[0] < size[1])) ||
-            ((screen_mode.width < screen_mode.height) && (size[0] > size[1])))
+      if (     ((screen_mode.width > screen_mode.height) && (size[0] < size[1]))
+            || ((screen_mode.width < screen_mode.height) && (size[0] > size[1])))
       {
          buffer_size[1] = size[0];
          buffer_size[0] = size[1];
@@ -226,8 +205,8 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
    }
    else if ((angle == 90) || (angle == 270))
    {
-      if (((screen_mode.width > screen_mode.height) && (size[0] > size[1])) ||
-            ((screen_mode.width < screen_mode.height && size[0] < size[1])))
+      if (     ((screen_mode.width > screen_mode.height) && (size[0] > size[1]))
+            || ((screen_mode.width < screen_mode.height  &&  size[0] < size[1])))
       {
          buffer_size[1] = size[0];
          buffer_size[0] = size[1];
@@ -266,7 +245,7 @@ static void *gfx_ctx_qnx_init(video_frame_info_t *video_info, void *video_driver
    return qnx;
 
 error:
-   RARCH_ERR("EGL error: %d.\n", eglGetError());
+   egl_report_error();
    gfx_ctx_qnx_destroy(video_driver);
 screen_error:
    screen_stop_events(screen_ctx);
@@ -276,96 +255,60 @@ screen_error:
 static void gfx_ctx_qnx_get_video_size(void *data,
       unsigned *width, unsigned *height)
 {
-   qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
-
 #ifdef HAVE_EGL
+   qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
    egl_get_video_size(&qnx->egl, width, height);
 #endif
 }
 
 static void gfx_ctx_qnx_check_window(void *data, bool *quit,
-      bool *resize, unsigned *width, unsigned *height,
-      bool is_shutdown)
+      bool *resize, unsigned *width, unsigned *height)
 {
    unsigned new_width, new_height;
    qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
-
-   *quit = false;
-
+   *quit               = false;
 #ifdef HAVE_EGL
    egl_get_video_size(&qnx->egl, &new_width, &new_height);
 #endif
 
    if (new_width != *width || new_height != *height)
    {
-      *width  = new_width;
-      *height = new_height;
-      *resize = true;
+      *width           = new_width;
+      *height          = new_height;
+      *resize          = true;
    }
-
-   /* Check if we are exiting. */
-   if (is_shutdown)
-      *quit = true;
 }
 
 static bool gfx_ctx_qnx_set_video_mode(void *data,
-      video_frame_info_t *video_info,
-      unsigned width, unsigned height,
-      bool fullscreen)
-{
-   (void)data;
-   (void)width;
-   (void)height;
-   (void)fullscreen;
-   return true;
-}
+      unsigned width, unsigned height, bool fullscreen) { return true; }
 
 static void gfx_ctx_qnx_input_driver(void *data,
       const char *joypad_name,
       input_driver_t **input, void **input_data)
 {
-   void *qnxinput       = input_qnx.init(joypad_name);
+   void *qnxinput       = input_driver_init_wrap(&input_qnx, joypad_name);
 
    *input               = qnxinput ? &input_qnx : NULL;
    *input_data          = qnxinput;
 }
 
-static enum gfx_ctx_api gfx_ctx_qnx_get_api(void *data)
-{
-   return qnx_api;
-}
+static enum gfx_ctx_api gfx_ctx_qnx_get_api(void *data) { return GFX_CTX_OPENGL_ES_API; }
 
 static bool gfx_ctx_qnx_bind_api(void *data,
       enum gfx_ctx_api api, unsigned major, unsigned minor)
 {
-   (void)data;
-
-   qnx_api = api;
-
-   if (api == GFX_CTX_OPENGL_ES_API)
-      return true;
-
-   return false;
+   return (api == GFX_CTX_OPENGL_ES_API);
 }
 
-static bool gfx_ctx_qnx_has_focus(void *data)
-{
-   (void)data;
-   return true;
-}
+static bool gfx_ctx_qnx_has_focus(void *data) { return true; }
 
-static bool gfx_ctx_qnx_suppress_screensaver(void *data, bool enable)
-{
-   (void)data;
-   (void)enable;
-   return false;
-}
+static bool gfx_ctx_qnx_suppress_screensaver(void *data, bool enable) { return false; }
 
 static int dpi_get_density(qnx_ctx_data_t *qnx)
 {
     int screen_dpi[2];
 
-    if(!qnx)
+    if (!qnx)
         return -1;
 
     if (screen_get_display_property_iv(qnx->screen_disp,
@@ -381,21 +324,26 @@ static int dpi_get_density(qnx_ctx_data_t *qnx)
 static bool gfx_ctx_qnx__get_metrics(void *data,
     enum display_metric_types type, float *value)
 {
-   static int dpi = -1;
+   static int dpi      = -1;
    qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
 
    switch (type)
    {
       case DISPLAY_METRIC_MM_WIDTH:
-         return false;
       case DISPLAY_METRIC_MM_HEIGHT:
          return false;
       case DISPLAY_METRIC_DPI:
          if (dpi == -1)
          {
-            dpi = dpi_get_density(qnx);
+            dpi       = dpi_get_density(qnx);
             if (dpi <= 0)
-               goto dpi_fallback;
+            {
+               /* Add a fallback in case the device doesn't report DPI.
+                * Calculated as an average of all BB10 device DPIs circa 2016. */
+               dpi    = 345;
+               *value = (float)dpi;
+               return true;
+            }
          }
          *value = (float)dpi;
          break;
@@ -406,46 +354,29 @@ static bool gfx_ctx_qnx__get_metrics(void *data,
    }
 
    return true;
-
-dpi_fallback:
-   /* Add a fallback in case the device doesn't report DPI.
-    * Calculated as an average of all BB10 device DPIs circa 2016. */
-   dpi    = 345;
-   *value = (float)dpi;
-   return true;
 }
 
 static void gfx_ctx_qnx_set_swap_interval(void *data, int swap_interval)
 {
-   qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
-
 #ifdef HAVE_EGL
+   qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
    egl_set_swap_interval(&qnx->egl, swap_interval);
 #endif
 }
 
-static void gfx_ctx_qnx_swap_buffers(void *data, void *data2)
+static void gfx_ctx_qnx_swap_buffers(void *data)
 {
-   qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
-
 #ifdef HAVE_EGL
+   qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
    egl_swap_buffers(&qnx->egl);
 #endif
 }
 
 static void gfx_ctx_qnx_bind_hw_render(void *data, bool enable)
 {
+#ifdef HAVE_EGL
    qnx_ctx_data_t *qnx = (qnx_ctx_data_t*)data;
-
-#ifdef HAVE_EGL
    egl_bind_hw_render(&qnx->egl, enable);
-#endif
-}
-
-static gfx_ctx_proc_t gfx_ctx_qnx_get_proc_address(const char *symbol)
-{
-#ifdef HAVE_EGL
-   return egl_get_proc_address(symbol);
 #endif
 }
 
@@ -458,10 +389,7 @@ static uint32_t gfx_ctx_qnx_get_flags(void *data)
    return flags;
 }
 
-static void gfx_ctx_qnx_set_flags(void *data, uint32_t flags)
-{
-   (void)flags;
-}
+static void gfx_ctx_qnx_set_flags(void *data, uint32_t flags) { }
 
 const gfx_ctx_driver_t gfx_ctx_qnx = {
    gfx_ctx_qnx_init,
@@ -485,11 +413,15 @@ const gfx_ctx_driver_t gfx_ctx_qnx = {
    false, /* has_windowed */
    gfx_ctx_qnx_swap_buffers,
    gfx_ctx_qnx_input_driver,
-   gfx_ctx_qnx_get_proc_address,
+#ifdef HAVE_EGL
+   egl_get_proc_address,
+#else
+   NULL,
+#endif
    NULL,
    NULL,
    NULL,
-   "qnx",
+   "egl_qnx",
    gfx_ctx_qnx_get_flags,
    gfx_ctx_qnx_set_flags,
    gfx_ctx_qnx_bind_hw_render,

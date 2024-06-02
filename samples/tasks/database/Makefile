@@ -94,7 +94,6 @@ SOURCES_C := \
 	$(CORE_DIR)/tasks/task_database_cue.c \
 	$(CORE_DIR)/database_info.c \
 	$(CORE_DIR)/core_info.c \
-	$(CORE_DIR)/file_path_str.c \
 	$(CORE_DIR)/msg_hash.c \
 	$(CORE_DIR)/intl/msg_hash_us.c \
 	$(CORE_DIR)/playlist.c \
@@ -107,6 +106,7 @@ SOURCES_C := \
 	$(LIBRETRO_COMM_DIR)/file/archive_file.c \
 	$(LIBRETRO_COMM_DIR)/file/config_file.c \
 	$(LIBRETRO_COMM_DIR)/file/file_path.c \
+	$(LIBRETRO_COMM_DIR)/file/file_path_io.c \
 	$(LIBRETRO_COMM_DIR)/file/retro_dirent.c \
 	$(LIBRETRO_COMM_DIR)/hash/rhash.c \
 	$(LIBRETRO_COMM_DIR)/compat/compat_fnmatch.c \
@@ -114,8 +114,7 @@ SOURCES_C := \
 	$(LIBRETRO_COMM_DIR)/compat/compat_strcasestr.c \
 	$(LIBRETRO_COMM_DIR)/compat/compat_strl.c \
 	$(LIBRETRO_COMM_DIR)/compat/fopen_utf8.c \
-	$(LIBRETRO_COMM_DIR)/formats/json/jsonsax.c \
-	$(LIBRETRO_COMM_DIR)/formats/json/jsonsax_full.c \
+	$(LIBRETRO_COMM_DIR)/formats/json/rjson.c \
 	$(LIBRETRO_COMM_DIR)/encodings/encoding_crc32.c \
 	$(LIBRETRO_COMM_DIR)/encodings/encoding_utf.c \
 	$(LIBRETRO_COMM_DIR)/queues/task_queue.c \
@@ -124,6 +123,7 @@ SOURCES_C := \
 	$(LIBRETRO_COMM_DIR)/streams/interface_stream.c \
 	$(LIBRETRO_COMM_DIR)/streams/memory_stream.c \
 	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \
+	$(LIBRETRO_COMM_DIR)/string/stdstring.c \
 	$(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c
 
 DEFINES    = -DHAVE_LIBRETRODB -DHAVE_COMPRESSION
