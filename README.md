@@ -5,6 +5,10 @@
 # RetroArch preserved legacy "Sytematic" theme (because I like the systematic theme)
 
 
+# update 06-02-2024 (i realize now it wasnt removed...the theme was renamed from "Plain" to "Background Image" my mental mistake ....nevermind)
+
+![s1](https://github.com/c4pt000/RetroArch/releases/download/legacy-systematic-theme/not-removed-renamed-2021-plain.png)
+
 * https://github.com/c4pt000/RetroArch/releases/tag/legacy-systematic-theme
 
 * place user.configdir.retroarch.tar.gz
